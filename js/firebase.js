@@ -49,6 +49,7 @@ export const phoneFmt = (p) => {
   return p || "";
 };
 export const timeFmt = (ts) => (ts?.toDate ? ts.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "");
+export const staffName = (email) => String(email || "").split("@")[0];
 export const naturalSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 
 export function toast(msg, kind = "ok") {

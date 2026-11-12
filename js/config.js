@@ -15,5 +15,8 @@ export const firebaseConfig = {
 // Your event name — shown in page headers, the signup page and the QR sign.
 export const EVENT_NAME = "CCA Auction";
 
+// Text at the bottom of every PDF receipt (e.g. your nonprofit name and EIN).
+export const RECEIPT_FOOTER = "Thank you for supporting CCA! Please keep this receipt for your records.";
+
 // The first bid number handed out. Numbers count up from here.
-export const FIRST_BID_NUMBER = 100;
+export const FIRST_BID_NUMBER = 1;

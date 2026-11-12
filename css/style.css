@@ -85,7 +85,7 @@ tr.click:hover { background: var(--bg); }
   table.stack td.num { text-align: left; }
 }
 @media print {
-  header, nav, .no-print, #toasts { display: none !important; }
+  header, nav, .no-print, #toasts, .demo-flag, #banner { display: none !important; }
   body { background: #fff; color: #000; }
   .card { border: none; }
 }

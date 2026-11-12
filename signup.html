@@ -32,7 +32,7 @@
   <div class="card narrow" id="doneCard" hidden style="text-align:center">
     <p class="muted">Thank you, <span id="doneName"></span>! Your bid number is</p>
     <div class="big-number" id="doneNumber"></div>
-    <p>Write this number on bid sheets.<br><b>Take a screenshot</b> so you don't forget it.</p>
+    <p>Pick up your <b>bid card #<span id="doneNumber2"></span></b> at the check-in table.<br><b>Take a screenshot</b> so you don't forget it.</p>
     <button class="big" id="another">Register someone else</button>
   </div>
 </main>
@@ -47,6 +47,7 @@
 
   function showDone(num, name) {
     document.getElementById("doneNumber").textContent = num;
+    document.getElementById("doneNumber2").textContent = num;
     document.getElementById("doneName").textContent = name;
     formCard.hidden = true; doneCard.hidden = false;
   }

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Database test</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .step { padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .step b { display: inline-block; width: 1.6em; }
+    .step code { display: block; margin: 6px 0 0 1.6em; white-space: pre-wrap; word-break: break-word;
+      font-size: .85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Database test</h1>
+    <p class="muted">Checks each piece of the connection in order. Screenshot the result if anything fails.</p>
+    <button class="primary big" id="run">Run test</button>
+    <div id="out" style="margin-top:12px"></div>
+  </div>
+</main>
+
+<script type="module">
+  // Load config first on its own, so a broken firebase.js still gets reported.
+  const line = (ok, title, detail = "") => {
+    document.getElementById("out").insertAdjacentHTML("beforeend", `<div class="step"><b>${ok === null ? "…" : ok ? "✓" : "✗"}</b>${title}
+      ${detail ? `<code>${String(detail).replace(/[&<]/g, (c) => c === "&" ? "&amp;" : "&lt;")}</code>` : ""}</div>`);
+  };
+  const withTimeout = (p, ms, what) => Promise.race([p,
+    new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error(
+      `${what} got no answer from the database after ${ms / 1000}s.`), { code: "timeout" })), ms))]);
+  const errText = (e) => `${e?.code || "error"}: ${e?.message || e}`;
+
+  let cfg;
+  try { cfg = await import("./js/config.js"); }
+  catch (e) { line(false, "Could not load js/config.js", errText(e)); }
+
+  let fb;
+  if (cfg) {
+    try { fb = await import("./js/firebase.js"); }
+    catch (e) { line(false, "Could not load js/firebase.js (file missing or wrong folder?)", errText(e)); }
+  }
+
+  if (fb) fb.staffPage("Database test", (user) => {
+    document.getElementById("run").onclick = async () => {
+      document.getElementById("out").innerHTML = "";
+      const { db, doc, getDoc, setDoc, deleteDoc, serverTimestamp, onSnapshot, collection } = fb;
+
+      // 1. config
+      if (cfg.DEMO_MODE) { line(false, "DEMO_MODE is still true in js/config.js — the real database is not being used."); return; }
+      const pid = cfg.firebaseConfig?.projectId;
+      line(!!pid && !String(cfg.firebaseConfig.apiKey).startsWith("YOUR"), `Config loaded — project "${pid}"`);
+
+      // 2. login
+      line(true, `Signed in as ${user.email}`,
+        "This email must appear EXACTLY (lowercase) in the isStaff() list in your published Firestore rules.");
+
+      // 3. public read (counter) — tests that the database exists at all
+      try {
+        const c = await withTimeout(getDoc(doc(db, "counters", "bidders")), 10000, "Reading");
+        line(true, "Database reachable",
+          c.exists() ? `Next bid number: ${c.data().next}` : "Bid counter not created yet — visit the Home page once while signed in.");
+      } catch (e) {
+        line(false, "Can't reach the database", errText(e) +
+          "\n\nIf this says NOT_FOUND / database does not exist: the database must be the one named \"(default)\". " +
+          "If it says permission-denied: the rules weren't published.");
+        return;
+      }
+
+      // 4. staff write
+      const ref = doc(db, "items", "zz-test-item");
+      try {
+        await withTimeout(setDoc(ref, { itemNumber: "zz-test-item", description: "Connection test — safe to delete",
+          bidNumber: null, amount: null, paid: false, pickedUp: false, updatedAt: serverTimestamp() }), 10000, "Writing");
+        line(true, "Write a test item");
+      } catch (e) {
+        line(false, "Write a test item", errText(e) +
+          (String(e.code).includes("permission") ? "\n\nYour email isn't in the published rules, or the rules weren't published." : ""));
+        return;
+      }
+
+      // 5. read it back from the server
+      try {
+        const s = await withTimeout(getDoc(ref), 10000, "Reading back");
+        line(s.exists(), "Read the test item back", s.exists() ? "" : "Write said OK but the item isn't there.");
+      } catch (e) { line(false, "Read the test item back", errText(e)); }
+
+      // 6. live list
+      try {
+        const n = await withTimeout(new Promise((res, rej) => {
+          const un = onSnapshot(collection(db, "items"), (s) => { un(); res(s.size); }, rej);
+        }), 10000, "Live list");
+        line(true, `Live item list works — ${n} item(s) in the database (including the test item)`);
+      } catch (e) { line(false, "Live item list", errText(e)); }
+
+      // 7. clean up
+      try { await withTimeout(deleteDoc(ref), 10000, "Deleting"); line(true, "Deleted the test item"); }
+      catch (e) { line(false, "Delete the test item", errText(e)); }
+
+      line(true, "Done — if everything above has a ✓, the database is set up correctly.");
+    };
+  });
+</script>
+</body>
+</html>

@@ -21,6 +21,21 @@
     <a class="card" href="qr.html"><b>QR sign</b><br><span class="muted">Print the sign-up QR code</span></a>
     <a class="card" href="signup.html?new" target="_blank"><b>Register a bidder</b><br><span class="muted">Opens the public sign-up form</span></a>
   </div>
+  <h2>Bid numbers</h2>
+  <div class="card">
+    <p style="margin-top:0">Next bidder to register gets <b class="bn" id="nextNum" style="font-size:1.4rem">…</b>
+      <span class="muted" id="highest"></span></p>
+    <div class="row">
+      <label style="flex:0 1 180px">Set next number <input id="setNext" type="number" min="1" inputmode="numeric"></label>
+      <div style="flex:0 0 auto"><button id="saveNext">Save</button></div>
+    </div>
+    <details style="margin-top:8px">
+      <summary class="muted">Start fresh before the event</summary>
+      <p class="muted">Deletes <b>every bidder and every winner/payment</b> and sets the next bid number back to the start.
+        Your item list (numbers, descriptions, retail values) is kept. This can't be undone.</p>
+      <button class="danger" id="fresh">Delete test data &amp; restart numbering</button>
+    </details>
+  </div>
   <div class="card" id="demoBox" hidden>
     <b>Demo mode</b>
     <p class="muted">Data is saved in this browser only. Open stations in separate tabs to watch them update live.
@@ -31,7 +46,7 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, money, db, doc, getDoc, setDoc,
-           FIRST_BID_NUMBER, toast, friendlyError, DEMO_MODE, resetDemo } from "./js/firebase.js";
+           FIRST_BID_NUMBER, toast, friendlyError, writeBatch, DEMO_MODE, resetDemo } from "./js/firebase.js";
 
   staffPage("Home", async () => {
     if (DEMO_MODE) {
@@ -54,6 +69,46 @@
     } catch (e) { toast(friendlyError(e), "err"); }
 
     let bidders = new Map(), items = [];
+    const counterRef = doc(db, "counters", "bidders");
+    const maxBid = () => Math.max(0, ...bidders.keys());
+    async function showCounter() {
+      try {
+        const c = await getDoc(counterRef);
+        document.getElementById("nextNum").textContent = c.exists() ? `#${c.data().next}` : "—";
+      } catch (e) { toast(friendlyError(e), "err"); }
+    }
+    document.getElementById("saveNext").onclick = async () => {
+      const n = Number(document.getElementById("setNext").value);
+      if (!Number.isInteger(n) || n < 1) return toast("Enter a whole number, 1 or higher.", "err");
+      if (n <= maxBid()) return toast(`Bid #${maxBid()} is already taken — the next number must be ${maxBid() + 1} or higher.`, "err");
+      try { await setDoc(counterRef, { next: n }); toast(`Next bidder will get #${n}.`); showCounter(); }
+      catch (e) { toast(friendlyError(e), "err"); }
+    };
+    document.getElementById("fresh").onclick = async () => {
+      const typed = prompt(`This deletes ALL ${bidders.size} bidders and clears every winner and payment.\nItems stay in your list.\n\nType DELETE to confirm.`);
+      if (typed !== "DELETE") return toast("Nothing was deleted.");
+      try {
+        const ops = [
+          ...[...bidders.values()].map((b) => ["del", doc(db, "bidders", b.id)]),
+          ...items.map((i) => i.description || i.retailValue != null
+            ? ["clear", doc(db, "items", i.id)]
+            : ["del", doc(db, "items", i.id)]),
+        ];
+        for (let s = 0; s < ops.length; s += 400) {
+          const batch = writeBatch(db);
+          ops.slice(s, s + 400).forEach(([kind, ref]) => kind === "del" ? batch.delete(ref)
+            : batch.set(ref, { bidNumber: null, amount: null, paid: false, paidAt: null, paidMethod: "", paidBy: "",
+                               pickedUp: false, pickedUpAt: null, pickedUpBy: "" }, { merge: true }));
+          await batch.commit();
+        }
+        await setDoc(counterRef, { next: FIRST_BID_NUMBER });
+        try { localStorage.removeItem("myBid"); } catch {}
+        toast(`Done — numbering restarts at #${FIRST_BID_NUMBER}.`);
+        showCounter();
+      } catch (e) { toast(friendlyError(e), "err"); }
+    };
+    showCounter();
+
     const render = () => {
       const won = items.filter((i) => i.bidNumber != null);
       const sales = won.reduce((s, i) => s + (Number(i.amount) || 0), 0);
@@ -67,8 +122,10 @@
         stat(money(paid), "Collected") +
         stat(money(sales - paid), "Still owed") +
         stat(`${picked} / ${won.length}`, "Picked up");
+      document.getElementById("highest").textContent = bidders.size ? `(highest registered so far: #${maxBid()})` : "";
+      document.getElementById("setNext").placeholder = String(maxBid() + 1);
     };
-    listenBidders((m) => { bidders = m; render(); });
+    listenBidders((m) => { bidders = m; render(); showCounter(); });
     listenItems((l) => { items = l; render(); });
   });
 </script>

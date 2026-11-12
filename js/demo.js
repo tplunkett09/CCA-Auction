@@ -2,26 +2,26 @@
 // Same function names as the Firebase SDK, so the pages don't know the difference.
 // Real-time works between tabs/windows of the SAME browser on the SAME device.
 
-const KEY = "auctionDemoDB_v1";
+const KEY = "auctionDemoDB_v2";
 
 const SEED = () => ({
-  counters: { bidders: { next: 106 } },
+  counters: { bidders: { next: 7 } },
   bidders: Object.fromEntries([
-    [100, "Mary", "Johnson", "6155550100", "mary@example.com", "12 Oak St", "Franklin", "TN", "37064"],
-    [101, "James", "Smith", "6155550101", "", "88 Maple Ave", "Franklin", "TN", "37067"],
-    [102, "Linda", "Garcia", "6155550102", "linda@example.com", "4 Elm Ct", "Brentwood", "TN", "37027"],
-    [103, "Robert", "Brown", "6155550103", "", "230 Pine Rd", "Nashville", "TN", "37215"],
-    [104, "Patricia", "Miller", "6155550104", "pmiller@example.com", "9 Cedar Ln", "Franklin", "TN", "37069"],
-    [105, "Michael", "Davis", "6155550105", "", "71 Birch Dr", "Spring Hill", "TN", "37174"],
+    [1, "Mary", "Johnson", "6155550100", "mary@example.com", "12 Oak St", "Franklin", "TN", "37064"],
+    [2, "James", "Smith", "6155550101", "", "88 Maple Ave", "Franklin", "TN", "37067"],
+    [3, "Linda", "Garcia", "6155550102", "linda@example.com", "4 Elm Ct", "Brentwood", "TN", "37027"],
+    [4, "Robert", "Brown", "6155550103", "", "230 Pine Rd", "Nashville", "TN", "37215"],
+    [5, "Patricia", "Miller", "6155550104", "pmiller@example.com", "9 Cedar Ln", "Franklin", "TN", "37069"],
+    [6, "Michael", "Davis", "6155550105", "", "71 Birch Dr", "Spring Hill", "TN", "37174"],
   ].map(([bidNumber, firstName, lastName, phone, email, street, city, state, zip]) =>
     [String(bidNumber), { bidNumber, firstName, lastName, phone, email, street, city, state, zip, createdAt: { __ts: Date.now() } }])),
   items: Object.fromEntries([
-    ["1", "Wine & cheese gift basket", 100, 85, true, true],
-    ["2", "Weekend cabin stay", 100, 450, true, false],
-    ["3", "Signed football", 101, 120, false, false],
-    ["4", "Spa day package", 102, 200, true, false],
-    ["5", "Handmade quilt", 103, 175, false, false],
-    ["6", "$100 restaurant gift card", 103, 90, false, false],
+    ["1", "Wine & cheese gift basket", 1, 85, true, true],
+    ["2", "Weekend cabin stay", 1, 450, true, false],
+    ["3", "Signed football", 2, 120, false, false],
+    ["4", "Spa day package", 3, 200, true, false],
+    ["5", "Handmade quilt", 4, 175, false, false],
+    ["6", "$100 restaurant gift card", 4, 90, false, false],
     ["7", "Kids bike", null, null, false, false],
     ["8", "Golf foursome", null, null, false, false],
     ["9", "Pottery class for two", null, null, false, false],

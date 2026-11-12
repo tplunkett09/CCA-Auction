@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Checkout</title>
   <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 <main>
@@ -26,7 +27,8 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, updateDoc, writeBatch, serverTimestamp,
-           esc, money, fullName, address, phoneFmt, timeFmt, toast, friendlyError } from "./js/firebase.js";
+           esc, money, fullName, address, phoneFmt, timeFmt, staffName, toast, friendlyError } from "./js/firebase.js";
+  import { shareReceipt, buildReceipt, downloadReceipt } from "./js/receipt.js";
 
   staffPage("Checkout", (user) => {
     let bidders = new Map(), items = [], current = null;
@@ -68,8 +70,8 @@
                 <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
                 <td class="num">${money(i.amount)}</td>
                 <td>${i.paid ? `<span class="pill ok">Paid${i.paidMethod ? " · " + esc(i.paidMethod) : ""}</span>
-                       <span class="muted">${esc(timeFmt(i.paidAt))}</span>` : `<span class="pill bad">Unpaid</span>`}
-                    ${i.pickedUp ? `<span class="pill ok">Picked up</span>` : ""}</td>
+                       <span class="muted">${esc(timeFmt(i.paidAt))}${i.paidBy ? " by " + esc(staffName(i.paidBy)) : ""}</span>` : `<span class="pill bad">Unpaid</span>`}
+                    ${i.pickedUp ? `<br><span class="pill ok">Picked up</span> <span class="muted">${i.pickedUpBy ? "by " + esc(staffName(i.pickedUpBy)) : ""}</span>` : ""}</td>
                 <td class="no-print">${i.paid
                   ? `<button data-undo="${esc(i.id)}" ${i.pickedUp ? "disabled title='Already picked up'" : ""}>Undo</button>`
                   : `<button class="ok" data-pay="${esc(i.id)}">Mark paid</button>`}</td>
@@ -82,7 +84,11 @@
             </label>
             <button class="ok big" id="payAll">Mark all ${unpaidCount} paid — ${money(due)}</button>
           </div>` : ""}
-          <p class="no-print" style="margin-top:12px"><button class="link" onclick="window.print()">Print receipt</button></p>
+          <div class="row no-print" style="margin-top:14px">
+            <button class="primary" id="shareReceipt">Text / share receipt (PDF)</button>
+            <button id="dlReceipt">Download PDF</button>
+            <button onclick="window.print()">Print</button>
+          </div>
           ` : `<p class="muted">Nothing recorded for this bidder yet.</p>`}
         </div>`;
 
@@ -91,6 +97,17 @@
       el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
         if (confirm("Undo payment for this item?")) setPaid([btn.dataset.undo], false);
       });
+      const shareBtn = document.getElementById("shareReceipt");
+      if (shareBtn) {
+        shareBtn.onclick = async () => {
+          try { const r = await shareReceipt(current, b, mine); if (r === "downloaded") toast("Receipt PDF downloaded."); }
+          catch (err) { toast("Couldn't make the PDF: " + err.message, "err"); }
+        };
+        document.getElementById("dlReceipt").onclick = () => {
+          try { downloadReceipt(buildReceipt(current, b, mine), `Receipt-${current}.pdf`); }
+          catch (err) { toast("Couldn't make the PDF: " + err.message, "err"); }
+        };
+      }
       const all = document.getElementById("payAll");
       if (all) all.onclick = () => setPaid(mine.filter((i) => !i.paid).map((i) => i.id), true, method());
     }
