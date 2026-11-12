@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pickup</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <form class="card narrow" id="lookup">
+    <label>Bidder # <input class="huge" id="bid" type="number" inputmode="numeric" min="1" autofocus></label>
+    <button class="primary big" type="submit">Look up</button>
+  </form>
+
+  <div id="detail"></div>
+
+  <h2>Paid and waiting for pickup</h2>
+  <div class="card table-wrap">
+    <table class="stack">
+      <thead><tr><th>Bid #</th><th>Name</th><th>Items to hand out</th></tr></thead>
+      <tbody id="waiting"></tbody>
+    </table>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, listenItems, db, doc, writeBatch, serverTimestamp,
+           esc, fullName, phoneFmt, timeFmt, toast, friendlyError } from "./js/firebase.js";
+
+  staffPage("Pickup", (user) => {
+    let bidders = new Map(), items = [], current = null;
+    const won = () => items.filter((i) => i.bidNumber != null);
+
+    function renderDetail() {
+      const el = document.getElementById("detail");
+      if (current == null) { el.innerHTML = ""; return; }
+      const b = bidders.get(current);
+      const mine = won().filter((i) => i.bidNumber === current);
+      const ready = mine.filter((i) => i.paid && !i.pickedUp);
+      const unpaid = mine.filter((i) => !i.paid);
+
+      el.innerHTML = `
+        <div class="card">
+          <div class="bidder-head">
+            <div>
+              <div class="bn">#${esc(current)}</div>
+              <b>${b ? esc(fullName(b)) : '<span class="pill bad">Not registered</span>'}</b>
+              ${b ? `<br><span class="muted">${esc(phoneFmt(b.phone))}</span>` : ""}
+            </div>
+          </div>
+          ${unpaid.length ? `<p class="pill bad" style="font-size:1rem;margin:12px 0">
+              ${unpaid.length} unpaid item(s) — send to Checkout before handing these out</p>` : ""}
+          ${mine.length ? `
+          <div class="table-wrap"><table class="stack">
+            <thead><tr><th>Item #</th><th>Description</th><th>Status</th><th></th></tr></thead>
+            <tbody>${mine.map((i) => `
+              <tr>
+                <td><b style="font-size:1.2rem">${esc(i.itemNumber)}</b></td>
+                <td>${esc(i.description)}</td>
+                <td>${i.pickedUp ? `<span class="pill ok">Picked up</span> <span class="muted">${esc(timeFmt(i.pickedUpAt))}</span>`
+                     : i.paid ? `<span class="pill warn">Ready</span>` : `<span class="pill bad">Not paid</span>`}</td>
+                <td>${i.pickedUp ? `<button data-undo="${esc(i.id)}">Undo</button>`
+                     : `<button class="ok" data-pick="${esc(i.id)}" ${i.paid ? "" : "disabled"}>Picked up</button>`}</td>
+              </tr>`).join("")}</tbody>
+          </table></div>
+          ${ready.length > 1 ? `<button class="ok big" id="pickAll" style="margin-top:14px">Mark all ${ready.length} ready items picked up</button>` : ""}
+          ` : `<p class="muted">This bidder hasn't won any items.</p>`}
+        </div>`;
+
+      el.querySelectorAll("[data-pick]").forEach((btn) => btn.onclick = () => setPicked([btn.dataset.pick], true));
+      el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
+        if (confirm("Mark this item as NOT picked up?")) setPicked([btn.dataset.undo], false);
+      });
+      const all = document.getElementById("pickAll");
+      if (all) all.onclick = () => setPicked(ready.map((i) => i.id), true);
+    }
+
+    async function setPicked(ids, picked) {
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.update(doc(db, "items", id), picked
+        ? { pickedUp: true, pickedUpAt: serverTimestamp(), pickedUpBy: user.email }
+        : { pickedUp: false, pickedUpAt: null, pickedUpBy: "" }));
+      try { await batch.commit(); toast(picked ? `${ids.length} item(s) picked up.` : "Pickup undone."); }
+      catch (err) { toast(friendlyError(err), "err"); }
+    }
+
+    function renderWaiting() {
+      const wait = new Map();
+      won().filter((i) => i.paid && !i.pickedUp).forEach((i) => {
+        if (!wait.has(i.bidNumber)) wait.set(i.bidNumber, []);
+        wait.get(i.bidNumber).push(i.itemNumber);
+      });
+      document.getElementById("waiting").innerHTML = [...wait.entries()].sort((a, b) => a[0] - b[0])
+        .map(([n, list]) => `<tr class="click" data-bid="${n}"><td><b>${n}</b></td>
+          <td>${esc(fullName(bidders.get(n)))}</td><td>${list.map(esc).join(", ")}</td></tr>`).join("")
+        || `<tr><td colspan="3" class="muted">Nothing waiting.</td></tr>`;
+    }
+    document.getElementById("waiting").onclick = (e) => {
+      const tr = e.target.closest("tr[data-bid]");
+      if (tr) { open(Number(tr.dataset.bid)); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    };
+
+    function open(n) { current = n; document.getElementById("bid").value = n; renderDetail(); }
+    document.getElementById("lookup").onsubmit = (e) => {
+      e.preventDefault();
+      const n = Number(document.getElementById("bid").value);
+      if (Number.isInteger(n) && n > 0) open(n);
+    };
+
+    const renderAll = () => { renderDetail(); renderWaiting(); };
+    listenBidders((m) => { bidders = m; renderAll(); });
+    listenItems((l) => { items = l; renderAll(); });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Winners</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <form class="card" id="f">
+    <h1>Enter a winning bid</h1>
+    <div class="row">
+      <label style="flex:0 1 140px">Item #
+        <input name="itemNumber" id="itemNumber" required autocomplete="off" maxlength="20">
+      </label>
+      <label>Description (optional)
+        <input name="description" maxlength="120" autocomplete="off">
+      </label>
+    </div>
+    <div class="row">
+      <label style="flex:0 1 140px">Winning bid #
+        <input name="bidNumber" id="bidNumber" type="number" inputmode="numeric" required min="1">
+      </label>
+      <label style="flex:0 1 160px">Amount ($)
+        <input name="amount" type="number" inputmode="decimal" step="0.01" min="0" required>
+      </label>
+      <div><p id="who" class="muted" style="margin:0 0 18px"></p></div>
+    </div>
+    <p id="existing" class="muted"></p>
+    <div class="row">
+      <button class="primary big" type="submit" id="save">Save winner</button>
+      <button class="big" type="button" id="clear" style="flex:0 1 140px">Clear</button>
+    </div>
+  </form>
+
+  <div class="row no-print">
+    <label>Filter entered items <input id="q" type="search" placeholder="item #, bid # or name"></label>
+  </div>
+  <div class="card table-wrap">
+    <table class="stack">
+      <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th>Bid #</th><th>Winner</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, listenItems, db, doc, setDoc, serverTimestamp,
+           esc, money, fullName, toast, friendlyError } from "./js/firebase.js";
+
+  staffPage("Winners", (user) => {
+    let bidders = new Map(), items = [];
+    const f = document.getElementById("f");
+    const itemIn = document.getElementById("itemNumber"), bidIn = document.getElementById("bidNumber");
+    const findItem = (n) => items.find((i) => String(i.itemNumber).toLowerCase() === String(n).trim().toLowerCase());
+
+    const status = (i) => i.pickedUp ? `<span class="pill ok">Picked up</span>`
+      : i.paid ? `<span class="pill ok">Paid</span>` : `<span class="pill warn">Unpaid</span>`;
+
+    function showWho() {
+      const n = Number(bidIn.value);
+      const b = bidders.get(n);
+      const el = document.getElementById("who");
+      if (!bidIn.value) el.innerHTML = "";
+      else if (b) el.innerHTML = `✓ <b>${esc(fullName(b))}</b>`;
+      else el.innerHTML = `<span class="pill bad">No bidder #${esc(n)}</span>`;
+    }
+    function showExisting() {
+      const i = findItem(itemIn.value);
+      if (i?.description && !f.description.value) f.description.value = i.description;
+      document.getElementById("existing").innerHTML = !i ? ""
+        : i.bidNumber != null
+          ? `Item ${esc(i.itemNumber)}${i.description ? " — " + esc(i.description) : ""} already recorded: bid #${esc(i.bidNumber)} for ${money(i.amount)} ${status(i)} — saving will replace it.`
+          : `Item ${esc(i.itemNumber)}: ${esc(i.description)}${i.retailValue != null ? ` (retail ${money(i.retailValue)})` : ""} — no winner yet.`;
+    }
+    bidIn.oninput = showWho;
+    itemIn.oninput = showExisting;
+
+    function render() {
+      const term = document.getElementById("q").value.trim().toLowerCase();
+      const rows = items.filter((i) => i.bidNumber != null).filter((i) => !term ||
+        `${i.itemNumber} ${i.description || ""} ${i.bidNumber} ${fullName(bidders.get(i.bidNumber))}`.toLowerCase().includes(term));
+      document.getElementById("rows").innerHTML = rows.map((i) => `
+        <tr>
+          <td><b>${esc(i.itemNumber)}</b></td>
+          <td>${esc(i.description)}</td>
+          <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
+          <td>${esc(i.bidNumber)}</td>
+          <td>${esc(fullName(bidders.get(i.bidNumber))) || '<span class="pill bad">Unknown</span>'}</td>
+          <td class="num">${money(i.amount)}</td>
+          <td>${status(i)}</td>
+          <td class="no-print"><button data-edit="${esc(i.id)}">Edit</button>
+            ${i.paid ? "" : `<button class="danger" data-del="${esc(i.id)}">Clear winner</button>`}</td>
+        </tr>`).join("") || `<tr><td colspan="8" class="muted">No winners entered yet.</td></tr>`;
+    }
+    document.getElementById("q").oninput = render;
+
+    document.getElementById("rows").onclick = async (e) => {
+      const edit = e.target.dataset.edit, del = e.target.dataset.del;
+      if (edit) {
+        const i = items.find((x) => x.id === edit);
+        f.itemNumber.value = i.itemNumber; f.description.value = i.description || "";
+        f.bidNumber.value = i.bidNumber; f.amount.value = i.amount;
+        showWho(); showExisting(); window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      if (del && confirm(`Remove the winner from item ${del}? The item itself stays in the list.`)) {
+        try {
+          await setDoc(doc(db, "items", del), { bidNumber: null, amount: null, paid: false, pickedUp: false,
+                                                updatedAt: serverTimestamp() }, { merge: true });
+          toast(`Winner cleared from item ${del}.`);
+        }
+        catch (err) { toast(friendlyError(err), "err"); }
+      }
+    };
+
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const itemNumber = f.itemNumber.value.trim();
+      const bidNumber = Number(f.bidNumber.value);
+      const amount = Math.round(Number(f.amount.value) * 100) / 100;
+      if (!itemNumber || itemNumber.includes("/")) return toast("Item # can't be blank or contain “/”.", "err");
+      if (!Number.isInteger(bidNumber) || bidNumber < 1) return toast("Enter a valid bid #.", "err");
+      if (!bidders.has(bidNumber) && !confirm(`Bid #${bidNumber} isn't registered. Save anyway?`)) return;
+
+      const existing = findItem(itemNumber);
+      if (existing?.paid && existing.bidNumber !== bidNumber)
+        return toast(`Item ${itemNumber} is already PAID by #${existing.bidNumber}. Undo the payment at Checkout first.`, "err");
+
+      const id = existing?.id || itemNumber;
+      const data = { itemNumber, description: f.description.value.trim() || existing?.description || "",
+                     bidNumber, amount, updatedAt: serverTimestamp(), enteredBy: user.email };
+      if (!existing || existing.bidNumber == null) Object.assign(data, { paid: false, pickedUp: false });
+      try {
+        await setDoc(doc(db, "items", id), data, { merge: true });
+        toast(`Item ${itemNumber} → bid #${bidNumber} (${money(amount)}) saved.`);
+        f.reset(); showWho(); showExisting(); itemIn.focus();
+      } catch (err) { toast(friendlyError(err), "err"); }
+    };
+    document.getElementById("clear").onclick = () => { f.reset(); showWho(); showExisting(); itemIn.focus(); };
+
+    listenBidders((m) => { bidders = m; showWho(); render(); });
+    listenItems((l) => { items = l; showExisting(); render(); });
+  });
+</script>
+</body>
+</html>

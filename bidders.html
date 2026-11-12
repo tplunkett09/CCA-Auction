@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bidders</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="row no-print">
+    <label>Search by name, bid #, phone or address
+      <input id="q" type="search" placeholder="e.g. Smith or 112" autofocus>
+    </label>
+    <div style="flex:0 0 auto" class="row">
+      <a href="signup.html?new" target="_blank"><button class="primary">+ Add bidder</button></a>
+      <button id="csv">Export CSV</button>
+    </div>
+  </div>
+  <p class="muted" id="count"></p>
+  <div class="card table-wrap">
+    <table class="stack">
+      <thead><tr><th>Bid #</th><th>Name</th><th>Phone</th><th>Address</th><th>Email</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, esc, fullName, address, phoneFmt } from "./js/firebase.js";
+
+  staffPage("Bidders", () => {
+    let list = [];
+    const q = document.getElementById("q");
+
+    const render = () => {
+      const term = q.value.trim().toLowerCase();
+      const digits = term.replace(/\D/g, "");
+      const shown = list.filter((b) => {
+        if (!term) return true;
+        if (String(b.bidNumber) === term) return true;
+        const hay = `${b.bidNumber} ${fullName(b)} ${address(b)} ${b.email || ""}`.toLowerCase();
+        return hay.includes(term) || (digits.length >= 3 && String(b.phone || "").replace(/\D/g, "").includes(digits));
+      });
+      document.getElementById("count").textContent = `${shown.length} of ${list.length} bidders`;
+      document.getElementById("rows").innerHTML = shown.map((b) => `
+        <tr>
+          <td><b>${esc(b.bidNumber)}</b></td>
+          <td>${esc(fullName(b))}</td>
+          <td><a href="tel:${esc(b.phone)}">${esc(phoneFmt(b.phone))}</a></td>
+          <td>${esc(address(b))}</td>
+          <td>${esc(b.email)}</td>
+        </tr>`).join("") || `<tr><td colspan="5" class="muted">No bidders match.</td></tr>`;
+    };
+
+    listenBidders((m) => { list = [...m.values()].sort((a, b) => a.bidNumber - b.bidNumber); render(); });
+    q.oninput = render;
+
+    document.getElementById("csv").onclick = () => {
+      const cols = ["bidNumber", "firstName", "lastName", "phone", "email", "street", "city", "state", "zip"];
+      const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const csv = [cols.join(","), ...list.map((b) => cols.map((c) => cell(b[c])).join(","))].join("\r\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = "bidders.csv";
+      a.click();
+    };
+  });
+</script>
+</body>
+</html>

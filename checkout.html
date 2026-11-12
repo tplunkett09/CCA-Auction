@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <form class="card narrow no-print" id="lookup">
+    <label>Bidder # <input class="huge" id="bid" type="number" inputmode="numeric" min="1" autofocus></label>
+    <button class="primary big" type="submit">Look up</button>
+  </form>
+
+  <div id="detail"></div>
+
+  <h2 class="no-print">Bidders with a balance due</h2>
+  <div class="card table-wrap no-print">
+    <table class="stack">
+      <thead><tr><th>Bid #</th><th>Name</th><th>Phone</th><th class="num">Items</th><th class="num">Owes</th></tr></thead>
+      <tbody id="owing"></tbody>
+    </table>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, listenItems, db, doc, updateDoc, writeBatch, serverTimestamp,
+           esc, money, fullName, address, phoneFmt, timeFmt, toast, friendlyError } from "./js/firebase.js";
+
+  staffPage("Checkout", (user) => {
+    let bidders = new Map(), items = [], current = null;
+    const won = () => items.filter((i) => i.bidNumber != null);
+
+    function renderDetail() {
+      const el = document.getElementById("detail");
+      if (current == null) { el.innerHTML = ""; return; }
+      const b = bidders.get(current);
+      const mine = won().filter((i) => i.bidNumber === current);
+      const total = mine.reduce((s, i) => s + Number(i.amount || 0), 0);
+      const paid = mine.filter((i) => i.paid).reduce((s, i) => s + Number(i.amount || 0), 0);
+      const due = total - paid;
+      const unpaidCount = mine.filter((i) => !i.paid).length;
+
+      el.innerHTML = `
+        <div class="card">
+          <div class="bidder-head">
+            <div>
+              <div class="bn">#${esc(current)}</div>
+              <b>${b ? esc(fullName(b)) : '<span class="pill bad">Not registered</span>'}</b><br>
+              ${b ? `<span class="muted">${esc(phoneFmt(b.phone))} · ${esc(address(b))}</span>` : ""}
+            </div>
+            <span class="pill ${!mine.length ? "warn" : due > 0 ? "bad" : "ok"}" style="font-size:1rem">
+              ${!mine.length ? "No items won" : due > 0 ? "Balance due" : "Paid in full"}</span>
+          </div>
+          <div class="totals">
+            <div><span>Total</span><b>${money(total)}</b></div>
+            <div><span>Paid</span><b>${money(paid)}</b></div>
+            <div><span>Due</span><b style="color:var(--${due > 0 ? "bad" : "ok"})">${money(due)}</b></div>
+          </div>
+          ${mine.length ? `
+          <div class="table-wrap"><table class="stack">
+            <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th class="num">Paid price</th><th>Status</th><th class="no-print"></th></tr></thead>
+            <tbody>${mine.map((i) => `
+              <tr>
+                <td><b>${esc(i.itemNumber)}</b></td>
+                <td>${esc(i.description)}</td>
+                <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
+                <td class="num">${money(i.amount)}</td>
+                <td>${i.paid ? `<span class="pill ok">Paid${i.paidMethod ? " · " + esc(i.paidMethod) : ""}</span>
+                       <span class="muted">${esc(timeFmt(i.paidAt))}</span>` : `<span class="pill bad">Unpaid</span>`}
+                    ${i.pickedUp ? `<span class="pill ok">Picked up</span>` : ""}</td>
+                <td class="no-print">${i.paid
+                  ? `<button data-undo="${esc(i.id)}" ${i.pickedUp ? "disabled title='Already picked up'" : ""}>Undo</button>`
+                  : `<button class="ok" data-pay="${esc(i.id)}">Mark paid</button>`}</td>
+              </tr>`).join("")}</tbody>
+          </table></div>
+          ${unpaidCount ? `
+          <div class="row no-print" style="margin-top:14px">
+            <label style="flex:0 1 200px">Payment method
+              <select id="method"><option>Cash</option><option>Check</option><option>Card</option><option>Other</option></select>
+            </label>
+            <button class="ok big" id="payAll">Mark all ${unpaidCount} paid — ${money(due)}</button>
+          </div>` : ""}
+          <p class="no-print" style="margin-top:12px"><button class="link" onclick="window.print()">Print receipt</button></p>
+          ` : `<p class="muted">Nothing recorded for this bidder yet.</p>`}
+        </div>`;
+
+      const method = () => document.getElementById("method")?.value || "";
+      el.querySelectorAll("[data-pay]").forEach((btn) => btn.onclick = () => setPaid([btn.dataset.pay], true, method()));
+      el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
+        if (confirm("Undo payment for this item?")) setPaid([btn.dataset.undo], false);
+      });
+      const all = document.getElementById("payAll");
+      if (all) all.onclick = () => setPaid(mine.filter((i) => !i.paid).map((i) => i.id), true, method());
+    }
+
+    async function setPaid(ids, paid, method = "") {
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.update(doc(db, "items", id), paid
+        ? { paid: true, paidAt: serverTimestamp(), paidMethod: method, paidBy: user.email }
+        : { paid: false, paidAt: null, paidMethod: "", paidBy: "" }));
+      try { await batch.commit(); toast(paid ? `Marked ${ids.length} item(s) paid.` : "Payment undone."); }
+      catch (err) { toast(friendlyError(err), "err"); }
+    }
+
+    function renderOwing() {
+      const owe = new Map();
+      won().filter((i) => !i.paid).forEach((i) => {
+        const o = owe.get(i.bidNumber) || { n: 0, amt: 0 };
+        o.n++; o.amt += Number(i.amount || 0); owe.set(i.bidNumber, o);
+      });
+      const rows = [...owe.entries()].sort((a, b) => a[0] - b[0]);
+      document.getElementById("owing").innerHTML = rows.map(([n, o]) => {
+        const b = bidders.get(n);
+        return `<tr class="click" data-bid="${n}"><td><b>${n}</b></td><td>${esc(fullName(b))}</td>
+          <td>${esc(phoneFmt(b?.phone))}</td><td class="num">${o.n} item${o.n > 1 ? "s" : ""}</td><td class="num">${money(o.amt)}</td></tr>`;
+      }).join("") || `<tr><td colspan="5" class="muted">Everyone is paid up.</td></tr>`;
+    }
+    document.getElementById("owing").onclick = (e) => {
+      const tr = e.target.closest("tr[data-bid]");
+      if (tr) { open(Number(tr.dataset.bid)); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    };
+
+    function open(n) { current = n; document.getElementById("bid").value = n; renderDetail(); }
+    document.getElementById("lookup").onsubmit = (e) => {
+      e.preventDefault();
+      const n = Number(document.getElementById("bid").value);
+      if (Number.isInteger(n) && n > 0) open(n);
+    };
+
+    const renderAll = () => { renderDetail(); renderOwing(); };
+    listenBidders((m) => { bidders = m; renderAll(); });
+    listenItems((l) => { items = l; renderAll(); });
+  });
+</script>
+</body>
+</html>

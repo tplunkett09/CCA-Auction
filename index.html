@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auction</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <h1>Live totals</h1>
+  <div class="grid" id="stats"></div>
+
+  <h2>Stations</h2>
+  <div class="grid">
+    <a class="card" href="items.html"><b>Items</b><br><span class="muted">Load item #s, descriptions and retail values</span></a>
+    <a class="card" href="bidders.html"><b>Bidders</b><br><span class="muted">Look up names, numbers, phone, address</span></a>
+    <a class="card" href="winners.html"><b>Winners</b><br><span class="muted">Enter winning bid # and amount per item</span></a>
+    <a class="card" href="checkout.html"><b>Checkout</b><br><span class="muted">See what a bidder owes and mark paid</span></a>
+    <a class="card" href="pickup.html"><b>Pickup</b><br><span class="muted">Hand out paid items and mark picked up</span></a>
+    <a class="card" href="qr.html"><b>QR sign</b><br><span class="muted">Print the sign-up QR code</span></a>
+    <a class="card" href="signup.html?new" target="_blank"><b>Register a bidder</b><br><span class="muted">Opens the public sign-up form</span></a>
+  </div>
+  <div class="card" id="demoBox" hidden>
+    <b>Demo mode</b>
+    <p class="muted">Data is saved in this browser only. Open stations in separate tabs to watch them update live.
+      Turn off <code>DEMO_MODE</code> in <code>js/config.js</code> when Firebase is ready.</p>
+    <button class="danger" id="reset">Reset demo data</button>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, listenItems, money, db, doc, getDoc, setDoc,
+           FIRST_BID_NUMBER, toast, friendlyError, DEMO_MODE, resetDemo } from "./js/firebase.js";
+
+  staffPage("Home", async () => {
+    if (DEMO_MODE) {
+      document.getElementById("demoBox").hidden = false;
+      document.getElementById("reset").onclick = () => {
+        if (confirm("Erase all demo changes and reload the 10 sample items?")) {
+          resetDemo();
+          try { localStorage.removeItem("myBid"); } catch {}
+          toast("Demo data reset.");
+        }
+      };
+    }
+    // Make sure the bid-number counter exists so public sign-up works.
+    try {
+      const ref = doc(db, "counters", "bidders");
+      if (!(await getDoc(ref)).exists()) {
+        await setDoc(ref, { next: FIRST_BID_NUMBER });
+        toast(`Registration opened — bid numbers start at ${FIRST_BID_NUMBER}.`);
+      }
+    } catch (e) { toast(friendlyError(e), "err"); }
+
+    let bidders = new Map(), items = [];
+    const render = () => {
+      const won = items.filter((i) => i.bidNumber != null);
+      const sales = won.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      const paid = won.filter((i) => i.paid).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      const picked = won.filter((i) => i.pickedUp).length;
+      const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`;
+      document.getElementById("stats").innerHTML =
+        stat(bidders.size, "Registered bidders") +
+        stat(won.length, "Items won") +
+        stat(money(sales), "Total sales") +
+        stat(money(paid), "Collected") +
+        stat(money(sales - paid), "Still owed") +
+        stat(`${picked} / ${won.length}`, "Picked up");
+    };
+    listenBidders((m) => { bidders = m; render(); });
+    listenItems((l) => { items = l; render(); });
+  });
+</script>
+</body>
+</html>

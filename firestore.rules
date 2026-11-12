@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Paste this whole file into Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ▼▼ EDIT THIS LIST: every staff/volunteer email that should be able to use the staff pages.
+    //    Each email must also be added under Authentication → Users. Use lowercase.
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email.lower() in [
+          'you@example.com',
+          'volunteer1@example.com'
+        ];
+    }
+
+    function str(v, max) { return v is string && v.size() <= max; }
+
+    // Bid number counter. The public can read it and bump it by exactly 1 (during sign-up).
+    match /counters/bidders {
+      allow get: if true;
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || (
+        request.resource.data.keys().hasOnly(['next'])
+        && request.resource.data.next == resource.data.next + 1
+      );
+    }
+
+    // Bidders. The public can only CREATE one record (theirs) during sign-up and can never read the list.
+    match /bidders/{bid} {
+      allow read, update, delete: if isStaff();
+      allow create: if
+        request.resource.data.keys().hasOnly(['bidNumber','firstName','lastName','phone','email','street','city','state','zip','createdAt'])
+        && request.resource.data.bidNumber is int
+        && bid == string(request.resource.data.bidNumber)
+        && getAfter(/databases/$(database)/documents/counters/bidders).data.next == request.resource.data.bidNumber + 1
+        && request.resource.data.createdAt == request.time
+        && str(request.resource.data.firstName, 60) && request.resource.data.firstName.size() > 0
+        && str(request.resource.data.lastName, 60) && request.resource.data.lastName.size() > 0
+        && str(request.resource.data.phone, 20)
+        && str(request.resource.data.email, 120)
+        && str(request.resource.data.street, 120)
+        && str(request.resource.data.city, 60)
+        && str(request.resource.data.state, 20)
+        && str(request.resource.data.zip, 10);
+    }
+
+    // Items / winners / payments / pickups — staff only.
+    match /items/{item} {
+      allow read, write: if isStaff();
+    }
+  }
+}

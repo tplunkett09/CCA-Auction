@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bidder Registration</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="card narrow" id="formCard">
+    <h1 id="title">Bidder Registration</h1>
+    <p class="muted">Fill this out to get your bid number.</p>
+    <form id="f" autocomplete="on">
+      <div class="row">
+        <label>First name <input name="firstName" autocomplete="given-name" maxlength="60" required></label>
+        <label>Last name <input name="lastName" autocomplete="family-name" maxlength="60" required></label>
+      </div>
+      <label>Mobile phone <input name="phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="20" required></label>
+      <label>Email (optional) <input name="email" type="email" autocomplete="email" maxlength="120"></label>
+      <label>Street address <input name="street" autocomplete="street-address" maxlength="120" required></label>
+      <div class="row">
+        <label>City <input name="city" autocomplete="address-level2" maxlength="60" required></label>
+        <label style="flex:0 1 90px">State <input name="state" autocomplete="address-level1" maxlength="20" required></label>
+        <label style="flex:0 1 120px">ZIP <input name="zip" autocomplete="postal-code" inputmode="numeric" maxlength="10" required></label>
+      </div>
+      <button class="primary big" type="submit" id="go">Get my bid number</button>
+      <p class="err" id="err"></p>
+    </form>
+  </div>
+
+  <div class="card narrow" id="doneCard" hidden style="text-align:center">
+    <p class="muted">Thank you, <span id="doneName"></span>! Your bid number is</p>
+    <div class="big-number" id="doneNumber"></div>
+    <p>Write this number on bid sheets.<br><b>Take a screenshot</b> so you don't forget it.</p>
+    <button class="big" id="another">Register someone else</button>
+  </div>
+</main>
+
+<script type="module">
+  import { registerBidder, EVENT_NAME, friendlyError, esc } from "./js/firebase.js";
+
+  document.title = `Register · ${EVENT_NAME}`;
+  document.getElementById("title").textContent = `${EVENT_NAME} — Bidder Registration`;
+  const f = document.getElementById("f"), go = document.getElementById("go");
+  const formCard = document.getElementById("formCard"), doneCard = document.getElementById("doneCard");
+
+  function showDone(num, name) {
+    document.getElementById("doneNumber").textContent = num;
+    document.getElementById("doneName").textContent = name;
+    formCard.hidden = true; doneCard.hidden = false;
+  }
+
+  // If they refresh after registering, show their number again.
+  try {
+    const saved = JSON.parse(localStorage.getItem("myBid") || "null");
+    if (saved && !new URLSearchParams(location.search).has("new")) showDone(saved.num, saved.name);
+  } catch {}
+
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    go.disabled = true; go.textContent = "Registering…";
+    document.getElementById("err").textContent = "";
+    const v = Object.fromEntries(new FormData(f).entries());
+    for (const k in v) v[k] = v[k].trim();
+    v.state = v.state.toUpperCase();
+    try {
+      const num = await registerBidder(v);
+      try { localStorage.setItem("myBid", JSON.stringify({ num, name: v.firstName })); } catch {}
+      showDone(num, v.firstName);
+    } catch (err) {
+      document.getElementById("err").textContent = friendlyError(err);
+    } finally {
+      go.disabled = false; go.textContent = "Get my bid number";
+    }
+  };
+
+  document.getElementById("another").onclick = () => {
+    try { localStorage.removeItem("myBid"); } catch {}
+    f.reset(); doneCard.hidden = true; formCard.hidden = false; window.scrollTo(0, 0);
+  };
+</script>
+</body>
+</html>

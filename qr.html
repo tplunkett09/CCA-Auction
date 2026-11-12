@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR sign</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    .sign { text-align: center; padding: 32px 16px; }
+    .sign h1 { font-size: 2.4rem; margin-bottom: 4px; }
+    .sign .sub { font-size: 1.4rem; margin: 0 0 24px; }
+    #qr { display: inline-block; padding: 16px; background: #fff; border-radius: 12px; }
+    #qr img, #qr canvas { width: min(70vw, 360px) !important; height: auto !important; }
+    .url { word-break: break-all; margin-top: 16px; }
+    @media print { .sign { padding-top: 1in; } .sign h1 { font-size: 40pt; } .sign .sub { font-size: 22pt; } }
+  </style>
+</head>
+<body>
+<main>
+  <p class="no-print"><button class="primary" onclick="window.print()">Print this sign</button>
+    <span class="muted">Put copies at the entrance and check-in table.</span></p>
+  <div class="card sign">
+    <h1 id="ev"></h1>
+    <p class="sub">Scan to register &amp; get your bid number</p>
+    <div id="qr"></div>
+    <p class="url muted" id="url"></p>
+  </div>
+</main>
+<script type="module">
+  import { staffPage, EVENT_NAME } from "./js/firebase.js";
+  staffPage("QR sign", () => {
+    const url = new URL("signup.html", location.href).href;
+    document.getElementById("ev").textContent = EVENT_NAME;
+    document.getElementById("url").textContent = url;
+    new QRCode(document.getElementById("qr"), { text: url, width: 512, height: 512, correctLevel: QRCode.CorrectLevel.M });
+  });
+</script>
+</body>
+</html>
