@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Items</title>
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    .thumb { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; display: block;
+      background: var(--bg); border: 1px solid var(--line); }
+    .thumb.none { display: grid; place-items: center; font-size: .7rem; color: var(--muted); text-align: center; }
+    td.photo { width: 84px; }
+    td.photo a, #imgPreview a { text-decoration: none; }
+    .img-row { display: flex; gap: 12px; align-items: end; }
+    .img-row label { flex: 1; }
+    #imgPreview { width: 72px; height: 72px; margin-bottom: 10px; flex: 0 0 72px; }
+    @media (max-width: 640px) {
+      #rows tr { position: relative; padding-right: 88px; min-height: 88px; }
+      #rows td.photo { position: absolute; top: 8px; right: 0; width: auto; padding: 0; }
+    }
+  </style>
 </head>
 <body>
 <main>
@@ -21,6 +35,13 @@
         <input name="retailValue" type="number" inputmode="decimal" step="0.01" min="0">
       </label>
     </div>
+    <div class="img-row">
+      <label>Image URL (optional)
+        <input name="imageUrl" id="imageUrl" type="url" inputmode="url" maxlength="600" autocomplete="off"
+               placeholder="https://ik.imagekit.io/...">
+      </label>
+      <div id="imgPreview"></div>
+    </div>
     <p id="existing" class="muted"></p>
     <div class="row">
       <button class="primary big" type="submit" id="save">Save item</button>
@@ -30,9 +51,9 @@
 
   <details class="card">
     <summary><b>Paste a list from a spreadsheet</b></summary>
-    <p class="muted">Copy three columns from Excel or Google Sheets — <b>Item #, Description, Retail value</b> — and paste below.
-      A header row is skipped automatically. Items that already exist get their description and retail value updated;
-      winners and payments are never touched.</p>
+    <p class="muted">Copy columns from Excel or Google Sheets — <b>Item #, Description, Retail value</b>, and optionally
+      a 4th column <b>Image URL</b> — and paste below. A header row is skipped automatically. Items that already exist
+      get updated (a blank image column leaves the current image alone); winners and payments are never touched.</p>
     <textarea id="paste" rows="8" placeholder="1	Wine &amp; cheese basket	120&#10;2	Weekend cabin stay	600"></textarea>
     <p id="preview" class="muted"></p>
     <button class="primary" id="import" disabled>Import</button>
@@ -44,7 +65,7 @@
   <p class="muted" id="count"></p>
   <div class="card table-wrap">
     <table class="stack">
-      <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th>Winner</th><th class="num">Sold for</th><th></th></tr></thead>
+      <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th>Winner</th><th class="num">Sold for</th><th>Photo</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
@@ -63,6 +84,34 @@
       return v === "" || isNaN(Number(v)) ? null : Math.round(Number(v) * 100) / 100;
     };
     const validNum = (n) => n && !n.includes("/") && n.length <= 20;
+    const cleanUrl = (s) => {
+      const v = String(s ?? "").trim();
+      if (!v) return "";
+      try { const u = new URL(v); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; }
+    };
+    // Small version of the image. ImageKit can resize on the fly, so ask it for a 160px thumbnail
+    // instead of downloading the full photo. Other image hosts just get scaled down in the browser.
+    const thumbUrl = (url) => {
+      try {
+        const u = new URL(url);
+        if (u.hostname.endsWith("imagekit.io") && !u.searchParams.has("tr") && !u.pathname.includes("/tr:")) {
+          u.searchParams.set("tr", "w-160,h-160");
+        }
+        return u.href;
+      } catch { return url; }
+    };
+    const thumbHtml = (url, label = "") => url
+      ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="Open full image">
+           <img class="thumb" src="${esc(thumbUrl(url))}" alt="${esc(label)}" loading="lazy"
+                onerror="this.outerHTML='<div class=&quot;thumb none&quot;>Image not found</div>'"></a>`
+      : "";
+    const imgIn = document.getElementById("imageUrl");
+    const showPreview = () => {
+      const url = cleanUrl(imgIn.value);
+      document.getElementById("imgPreview").innerHTML =
+        url ? thumbHtml(url) : imgIn.value.trim() ? `<div class="thumb none">Not a valid link</div>` : "";
+    };
+    imgIn.oninput = showPreview;
 
     function showExisting() {
       const i = findItem(itemIn.value);
@@ -73,7 +122,7 @@
     }
     itemIn.oninput = () => {
       const i = findItem(itemIn.value);
-      if (i) { f.description.value = i.description || ""; f.retailValue.value = i.retailValue ?? ""; }
+      if (i) { f.description.value = i.description || ""; f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); }
       showExisting();
     };
 
@@ -90,9 +139,10 @@
           <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
           <td>${i.bidNumber != null ? `#${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))}` : '<span class="muted">—</span>'}</td>
           <td class="num">${i.bidNumber != null ? money(i.amount) : ""}</td>
+          <td class="photo">${thumbHtml(i.imageUrl, i.description)}</td>
           <td><button data-edit="${esc(i.id)}">Edit</button>
             ${i.bidNumber == null ? `<button class="danger" data-del="${esc(i.id)}">Delete</button>` : ""}</td>
-        </tr>`).join("") || `<tr><td colspan="6" class="muted">No items yet — add one above or paste a list.</td></tr>`;
+        </tr>`).join("") || `<tr><td colspan="7" class="muted">No items yet — add one above or paste a list.</td></tr>`;
     }
     document.getElementById("q").oninput = render;
 
@@ -101,7 +151,7 @@
       if (edit) {
         const i = items.find((x) => x.id === edit);
         f.itemNumber.value = i.itemNumber; f.description.value = i.description || "";
-        f.retailValue.value = i.retailValue ?? ""; showExisting();
+        f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); showExisting();
         window.scrollTo({ top: 0, behavior: "smooth" }); f.description.focus();
       }
       if (del && confirm(`Delete item ${del}?`)) {
@@ -114,17 +164,19 @@
       e.preventDefault();
       const itemNumber = f.itemNumber.value.trim();
       if (!validNum(itemNumber)) return toast("Item # can't be blank or contain “/”.", "err");
+      const imageUrl = cleanUrl(imgIn.value);
+      if (imageUrl === null) return toast("The image URL isn't a valid link — it should start with https://", "err");
       const existing = findItem(itemNumber);
       const data = { itemNumber, description: f.description.value.trim(),
-                     retailValue: parseMoney(f.retailValue.value), updatedAt: serverTimestamp() };
+                     retailValue: parseMoney(f.retailValue.value), imageUrl, updatedAt: serverTimestamp() };
       if (!existing) Object.assign(data, { bidNumber: null, amount: null, paid: false, pickedUp: false, createdBy: user.email });
       try {
         await setDoc(doc(db, "items", existing?.id || itemNumber), data, { merge: true });
         toast(`Item ${itemNumber} saved.`);
-        f.reset(); showExisting(); itemIn.focus();
+        f.reset(); showPreview(); showExisting(); itemIn.focus();
       } catch (err) { toast(friendlyError(err), "err"); }
     };
-    document.getElementById("clear").onclick = () => { f.reset(); showExisting(); itemIn.focus(); };
+    document.getElementById("clear").onclick = () => { f.reset(); showPreview(); showExisting(); itemIn.focus(); };
 
     // ---- paste import ----
     const paste = document.getElementById("paste"), importBtn = document.getElementById("import");
@@ -140,18 +192,22 @@
       out.push(cur); return out;
     }
     paste.oninput = () => {
-      parsed = []; const bad = [];
+      parsed = []; const bad = [], badImg = [];
       paste.value.split(/\r?\n/).forEach((line, idx) => {
         if (!line.trim()) return;
-        const [n, d, r] = splitLine(line).map((c) => (c ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
+        const [n, d, r, img] = splitLine(line).map((c) => (c ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
         if (idx === 0 && /item|#|number/i.test(n) && isNaN(parseMoney(r) ?? NaN)) return; // header row
         if (!validNum(n)) return bad.push(idx + 1);
-        parsed.push({ itemNumber: n, description: (d || "").slice(0, 120), retailValue: parseMoney(r) });
+        const row = { itemNumber: n, description: (d || "").slice(0, 120), retailValue: parseMoney(r) };
+        const url = cleanUrl(img);
+        if (url) row.imageUrl = url; else if (img) badImg.push(idx + 1);
+        parsed.push(row);
       });
       const dupes = parsed.filter((p) => findItem(p.itemNumber)).length;
       document.getElementById("preview").innerHTML = parsed.length
         ? `Ready: <b>${parsed.length}</b> items (${parsed.length - dupes} new, ${dupes} updates)` +
-          (bad.length ? ` · skipped line(s) ${bad.join(", ")}` : "")
+          (bad.length ? ` · skipped line(s) ${bad.join(", ")}` : "") +
+          (badImg.length ? ` · ignored invalid image link on line(s) ${badImg.join(", ")}` : "")
         : bad.length ? `Couldn't read line(s) ${bad.join(", ")}` : "";
       importBtn.disabled = !parsed.length;
     };
