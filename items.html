@@ -21,6 +21,16 @@
     .cat { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px;
       background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: 4px; }
     .numbering { border-left: 4px solid var(--accent); }
+    .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 4px 0 12px; max-width: 320px; }
+    .seg label { flex: 1; margin: 0; color: var(--ink); }
+    .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+    .seg span { display: block; text-align: center; padding: 11px 8px; font-weight: 600; cursor: pointer; background: var(--bg); }
+    .seg label + label span { border-left: 1px solid var(--line); }
+    .seg input:checked + span { background: var(--accent); color: var(--accent-ink); }
+    .seg input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: -3px; }
+    .type { display: inline-block; font-size: .75rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-right: 4px; }
+    .type.live { background: var(--bad-bg); color: var(--bad); }
+    .type.silent { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
     .numbering table td { padding: 4px 8px; border: none; }
     .numbering .plan { margin: 8px 0 12px; }
     @media (max-width: 640px) {
@@ -38,6 +48,13 @@
         <input name="description" id="description" required maxlength="120" autocomplete="off">
       </label>
     </div>
+    <fieldset style="border:none;padding:0;margin:0">
+      <legend class="muted" style="font-size:.9rem;margin-bottom:2px">Auction</legend>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="auctionType" value="Silent" checked><span>Silent</span></label>
+        <label><input type="radio" name="auctionType" value="Live"><span>Live</span></label>
+      </div>
+    </fieldset>
     <div class="row">
       <label style="flex:2 1 220px">Category
         <select name="category" id="category"></select>
@@ -80,15 +97,16 @@
   <details class="card">
     <summary><b>Paste a list from a spreadsheet</b></summary>
     <p class="muted">Copy columns from Excel or Google Sheets in this order and paste below:
-      <b>Description, Category, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone</b>.
-      A header row is skipped automatically. Each line is added as a new item.</p>
+      <b>Description, Category, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone,
+      Live/Silent</b>. A header row is skipped automatically. Each line is added as a new item; items are Silent unless
+      that last column says Live.</p>
     <textarea id="paste" rows="8" placeholder="Wine &amp; cheese basket	Food	120&#10;$50 Kroger card	Gift Cards	50"></textarea>
     <p id="preview" class="muted"></p>
     <button class="primary" id="import" disabled>Import</button>
   </details>
 
   <div class="row">
-    <label>Search items <input id="q" type="search" placeholder="item #, description, category or donor"></label>
+    <label>Search items <input id="q" type="search" placeholder="item #, description, category, donor, live/silent"></label>
   </div>
   <p class="muted" id="count"></p>
   <div class="card table-wrap">
@@ -122,6 +140,7 @@
       try { const u = new URL(v); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; }
     };
     const matchCategory = (s) => CATEGORIES.find((c) => c.toLowerCase() === String(s || "").trim().toLowerCase()) || "";
+    const typeOf = (i) => (i.auctionType === "Live" ? "Live" : "Silent");   // older items count as Silent
     const label = (i) => hasItemNumber(i) ? `#${i.itemNumber}` : `"${i.description || "item"}"`;
 
     // ---------- numbering order: category order, then the order items were entered ----------
@@ -296,6 +315,7 @@
       editingId = i.id;
       f.description.value = i.description || ""; f.category.value = CATEGORIES.includes(i.category) ? i.category : "";
       f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview();
+      f.querySelector(`input[name=auctionType][value="${typeOf(i)}"]`).checked = true;
       f.donorName.value = i.donorName || ""; f.donorAddress.value = i.donorAddress || ""; f.donorPhone.value = i.donorPhone || "";
       donorHint.textContent = "";
       document.getElementById("formTitle").textContent = hasItemNumber(i) ? `Edit item #${i.itemNumber}` : "Edit item (not numbered yet)";
@@ -311,6 +331,7 @@
       const imageUrl = cleanUrl(imgIn.value);
       if (imageUrl === null) return toast("The image URL isn't a valid link — it should start with https://", "err");
       const data = { description: f.description.value.trim(), category: f.category.value,
+                     auctionType: f.querySelector("input[name=auctionType]:checked")?.value || "Silent",
                      retailValue: parseMoney(f.retailValue.value), imageUrl,
                      donorName: f.donorName.value.trim(), donorAddress: f.donorAddress.value.trim(),
                      donorPhone: f.donorPhone.value.trim() };
@@ -335,7 +356,7 @@
       const sorted = [...items].sort((a, b) => naturalSort(a.itemNumber, b.itemNumber) || byNumberingOrder(a, b));
       const term = document.getElementById("q").value.trim().toLowerCase();
       const shown = sorted.filter((i) => !term ||
-        `${i.itemNumber ?? ""} ${i.description || ""} ${i.category || ""} ${i.donorName || ""}`.toLowerCase().includes(term));
+        `${i.itemNumber ?? ""} ${i.description || ""} ${i.category || ""} ${i.donorName || ""} ${typeOf(i)}`.toLowerCase().includes(term));
       const retail = items.reduce((s, i) => s + (Number(i.retailValue) || 0), 0);
       document.getElementById("count").textContent =
         `${shown.length} of ${items.length} items · total retail value ${money(retail)}`;
@@ -343,7 +364,7 @@
         <tr>
           <td>${hasItemNumber(i) ? `<b>${esc(i.itemNumber)}</b>` : `<span class="pill warn">No # yet</span>`}</td>
           <td>${esc(i.description)}
-            <div class="sub-line">${i.category ? `<span class="cat">${esc(i.category)}</span>` : ""}${i.donorName ? `Donor: ${esc(i.donorName)}` : ""}</div></td>
+            <div class="sub-line"><span class="type ${typeOf(i).toLowerCase()}">${typeOf(i)}</span>${i.category ? `<span class="cat">${esc(i.category)}</span>` : ""}${i.donorName ? `Donor: ${esc(i.donorName)}` : ""}</div></td>
           <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
           <td>${i.bidNumber != null ? `#${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))}` : '<span class="muted">—</span>'}</td>
           <td class="num">${i.bidNumber != null ? money(i.amount) : ""}</td>
@@ -382,12 +403,12 @@
       parsed = []; const badImg = [], badCat = [];
       paste.value.split(/\r?\n/).forEach((line, idx) => {
         if (!line.trim()) return;
-        const [d, c, r, img, dn, da, dp] = splitLine(line).map((x) => (x ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
+        const [d, c, r, img, dn, da, dp, at] = splitLine(line).map((x) => (x ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
         if (idx === 0 && /description|item/i.test(d) && parseMoney(r) == null) return; // header row
         if (!d) return;
         const row = { description: d.slice(0, 120), category: matchCategory(c), retailValue: parseMoney(r),
                       imageUrl: "", donorName: (dn || "").slice(0, 100), donorAddress: (da || "").slice(0, 160),
-                      donorPhone: (dp || "").slice(0, 20) };
+                      donorPhone: (dp || "").slice(0, 20), auctionType: /^live$/i.test(at || "") ? "Live" : "Silent" };
         if (c && !row.category) badCat.push(idx + 1);
         const url = cleanUrl(img);
         if (url) row.imageUrl = url; else if (img) badImg.push(idx + 1);
