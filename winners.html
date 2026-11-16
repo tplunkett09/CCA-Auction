@@ -131,13 +131,29 @@
       const data = { itemNumber, description: f.description.value.trim() || existing?.description || "",
                      bidNumber, amount, updatedAt: serverTimestamp(), enteredBy: user.email };
       if (!existing || existing.bidNumber == null) Object.assign(data, { paid: false, pickedUp: false });
+      // Clear the form and jump back to Item # right away, while we're still inside the tap.
+      // (Phones only keep the keyboard open if focus moves during the tap itself, not after
+      // waiting for the database.) If the save fails, the entry is put back so nothing is lost.
+      const entered = { itemNumber: f.itemNumber.value, description: f.description.value,
+                        bidNumber: f.bidNumber.value, amount: f.amount.value };
+      readyForNext();
       try {
         await setDoc(doc(db, "items", id), data, { merge: true });
         toast(`Item ${itemNumber} → bid #${bidNumber} (${money(amount)}) saved.`);
-        f.reset(); showWho(); showExisting(); itemIn.focus();
-      } catch (err) { toast(friendlyError(err), "err"); }
+      } catch (err) {
+        if (!f.itemNumber.value && !f.bidNumber.value && !f.amount.value) {
+          Object.entries(entered).forEach(([k, v]) => (f[k].value = v));
+          showWho(); showExisting();
+        }
+        toast(`Item ${itemNumber} was NOT saved — ${friendlyError(err)}`, "err");
+      }
     };
-    document.getElementById("clear").onclick = () => { f.reset(); showWho(); showExisting(); itemIn.focus(); };
+    function readyForNext() {
+      f.reset(); showWho(); showExisting();
+      itemIn.focus({ preventScroll: true });
+      f.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+    document.getElementById("clear").onclick = readyForNext;
 
     listenBidders((m) => { bidders = m; showWho(); render(); });
     listenItems((l) => { items = l; showExisting(); render(); });

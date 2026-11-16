@@ -18,9 +18,10 @@ if (DEMO_MODE) {
 export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE };
 export const {
   collection, doc, onSnapshot, runTransaction, setDoc, updateDoc,
-  deleteDoc, getDoc, writeBatch, serverTimestamp
+  deleteDoc, getDoc, getDocs, writeBatch, serverTimestamp
 } = fs;
-const { onAuthStateChanged, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } = au;
+const { onAuthStateChanged, signInWithEmailAndPassword, signOut } = au;
+export const { sendPasswordResetEmail } = au;
 
 if (DEMO_MODE) {
   const flag = () => {
@@ -64,7 +65,7 @@ export function toast(msg, kind = "ok") {
 
 export function friendlyError(e) {
   const code = e?.code || "";
-  if (code.includes("permission-denied")) return "Permission denied — this login isn't on the staff list (see README, step 5).";
+  if (code.includes("permission-denied")) return "Permission denied — this login doesn't have access to that. Ask an organizer to check your access on the Staff page.";
   if (code.includes("unavailable")) return "Can't reach the database — check the internet connection.";
   if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) return "Email or password is incorrect.";
   if (code.includes("too-many-requests")) return "Too many attempts — wait a minute and try again.";
@@ -117,16 +118,37 @@ function paintBanner() {
   b.textContent = [...new Set(bannerMsgs.values())].join(" ");
 }
 
-// ---------- staff page shell ----------
-const NAV = [
-  ["index.html", "Home"],
-  ["items.html", "Items"],
-  ["bidders.html", "Bidders"],
-  ["winners.html", "Winners"],
-  ["checkout.html", "Checkout"],
-  ["pickup.html", "Pickup"],
-  ["qr.html", "QR sign"],
+// ---------- staff pages & who can see them ----------
+// Each staff login has a record in the "staff" collection (managed on the Staff page) listing
+// the pages it may use. Owners (named in the Firestore rules) and admins can use every page.
+export const PAGES = [
+  // file,           key,        menu label, description (shown on the Staff page)
+  ["index.html",    "home",     "Home",     "Live totals"],
+  ["items.html",    "items",    "Items",    "Add/edit items, descriptions, photos"],
+  ["bidders.html",  "bidders",  "Bidders",  "Bidder names, phones, addresses"],
+  ["winners.html",  "winners",  "Winners",  "Enter winning bids"],
+  ["checkout.html", "checkout", "Checkout", "Take payments, receipts"],
+  ["pickup.html",   "pickup",   "Pickup",   "Hand out items"],
+  ["qr.html",       "qr",       "QR sign",  "Print the sign-up QR code"],
 ];
+const ADMIN_PAGES = [["access.html", "Staff"], ["test.html", "Test"]];
+const ALL_KEYS = PAGES.map((p) => p[1]);
+export let currentAccess = null;
+
+async function loadAccess(user) {
+  const email = String(user.email || "").toLowerCase();
+  if (DEMO_MODE && email === "demo@local") return { admin: true, owner: true, pages: ALL_KEYS };
+  const me = await getDoc(doc(db, "staff", email));
+  if (me.exists()) {
+    const d = me.data();
+    return d.admin ? { admin: true, pages: ALL_KEYS, name: d.name }
+                   : { admin: false, pages: (d.pages || []).filter((k) => ALL_KEYS.includes(k)), name: d.name };
+  }
+  if (DEMO_MODE) return { admin: false, pages: [] };
+  // No staff record: owners are allowed to list the staff collection, everyone else isn't.
+  try { await getDocs(collection(db, "staff")); return { admin: true, owner: true, pages: ALL_KEYS }; }
+  catch (e) { if (String(e.code).includes("permission")) return { admin: false, pages: [] }; throw e; }
+}
 
 export function staffPage(title, onReady) {
   document.title = `${title} · ${EVENT_NAME}`;
@@ -137,22 +159,68 @@ export function staffPage(title, onReady) {
       <a class="brand" href="index.html">${esc(EVENT_NAME)}</a>
       <span class="who" id="who"></span>
     </div>
-    <nav>${NAV.map(([href, label]) =>
-      `<a href="${href}" class="${href === here ? "active" : ""}">${label}</a>`).join("")}</nav>`;
+    <nav hidden></nav>`;
   document.body.prepend(header);
+  const nav = header.querySelector("nav");
   const main = document.querySelector("main");
   const content = main.innerHTML;
   main.innerHTML = `<p class="muted">Loading…</p>`;
 
   let started = false;
-  onAuthStateChanged(auth, (user) => {
-    if (!user) { header.querySelector("nav").hidden = true; renderLogin(main); return; }
-    header.querySelector("nav").hidden = false;
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) { nav.hidden = true; renderLogin(main); return; }
     document.getElementById("who").innerHTML =
       `${esc(user.email)} <button class="link" id="signout">Sign out</button>`;
     document.getElementById("signout").onclick = () => signOut(auth).then(() => location.reload());
-    if (!started) { started = true; main.innerHTML = content; onReady(user); }
+    if (started) return;
+    started = true;
+    main.innerHTML = `<p class="muted">Checking your access…</p>`;
+
+    let access;
+    try { access = await loadAccess(user); }
+    catch (e) {
+      main.innerHTML = `<div class="card narrow"><h1>Can't check access</h1><p>${esc(friendlyError(e))}</p>
+        <button class="primary" onclick="location.reload()">Try again</button></div>`;
+      return;
+    }
+    currentAccess = access;
+
+    const allowed = PAGES.filter(([, key]) => access.pages.includes(key)).map(([href, , label]) => [href, label]);
+    if (access.admin) allowed.push(ADMIN_PAGES[0]);
+    if (!allowed.length) {
+      main.innerHTML = `<div class="card narrow"><h1>No access yet</h1>
+        <p>You're signed in as <b>${esc(user.email)}</b>, but this login hasn't been given any staff pages.</p>
+        <p class="muted">Ask an organizer to add you on the Staff page, then reload.</p>
+        <button class="primary" onclick="location.reload()">Reload</button></div>`;
+      return;
+    }
+    const pageKey = PAGES.find(([href]) => href === here)?.[1];
+    const canSee = access.admin || (pageKey && access.pages.includes(pageKey));
+    if (!canSee) { location.replace(allowed[0][0]); return; }   // send them to a page they can use
+
+    nav.innerHTML = allowed.map(([href, label]) =>
+      `<a href="${href}" class="${href === here ? "active" : ""}">${label}</a>`).join("");
+    nav.hidden = false;
+    main.innerHTML = content;
+    onReady(user, access);
   });
+}
+
+// Creates a sign-in for a new staff member without signing the organizer out
+// (uses a separate, temporary Firebase connection).
+export async function createStaffLogin(email, password) {
+  if (DEMO_MODE) return "created";
+  const { initializeApp, deleteApp } = await import(FB + "firebase-app.js");
+  const tmp = initializeApp(firebaseConfig, "staff-setup-" + Date.now());
+  try {
+    const tmpAuth = au.getAuth(tmp);
+    await au.createUserWithEmailAndPassword(tmpAuth, email, password);
+    await au.signOut(tmpAuth);
+    return "created";
+  } catch (e) {
+    if (String(e.code).includes("email-already-in-use")) return "exists";
+    throw e;
+  } finally { await deleteApp(tmp); }
 }
 
 function renderLogin(main) {

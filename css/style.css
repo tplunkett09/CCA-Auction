@@ -9,6 +9,7 @@
     --warn: #f0b75c; --warn-bg: #3a2c12; --bad: #ff8a80; --bad-bg: #3d1a18; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--ink); }
 main { max-width: 1100px; margin: 0 auto; padding: 16px; }

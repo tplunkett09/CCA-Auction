@@ -5,12 +5,13 @@ A free, real-time auction web app that runs on **GitHub Pages** with **Firebase*
 | Page | Who uses it | What it does |
 |---|---|---|
 | `signup.html` | Bidders (public, via QR code) | Register and get the next bid number |
+| `access.html` | Admins | Add staff and choose which pages each can use |
 | `qr.html` | Staff | Printable QR sign that links to sign-up |
 | `bidders.html` | Check-in staff | Search bidders: bid #, name, phone, address; export CSV |
 | `winners.html` | Recording staff | Enter item # → winning bid # + amount |
 | `checkout.html` | Cashier | Look up a bid #, see balance, mark items paid (cash/check/card), print receipt |
 | `pickup.html` | Pickup table | Look up a bid #, hand out **paid** items, mark picked up |
-| `index.html` | Anyone on staff | Live totals: sales, collected, owed, picked up |
+| `index.html` | Staff | Staff home: live totals, bid number controls, links to every station |
 
 Only `signup.html` is public. All other pages require a staff login, and the database rules block the public from reading anyone's information.
 
@@ -37,10 +38,10 @@ Only `signup.html` is public. All other pages require a staff login, and the dat
 ### 4. Allow your site to use Firebase login
 Firebase console → **Authentication → Settings → Authorized domains → Add domain** → `<your-username>.github.io`
 
-### 5. Create staff logins and lock down the data
-1. **Authentication → Users → Add user** for each volunteer (email + password). Shared station logins like `checkout@yourorg.org` work fine.
-2. Open **`firestore.rules`**, replace the example emails in the `isStaff()` list with your staff emails (lowercase).
-3. Firestore Database → **Rules** → paste the whole file → **Publish**.
+### 5. Lock down the data and add staff
+1. Firestore Database → **Rules** → paste the whole `firestore.rules` file → **Publish**. The two **owners** named at the top of that file always have every page.
+2. Sign in as an owner and open the **Staff** page. Add each volunteer's email, optionally set a password (this creates their sign-in), and tick the pages they can use. Tick **Admin** for organizers who should see everything and manage staff.
+3. Volunteers only see the pages they were given; opening any other page sends them to one they can use.
 
 ### 6. Open registration
 Visit your site's home page and sign in once with a staff account. That creates the bid-number counter (starting at `FIRST_BID_NUMBER`). Then open **QR sign** and print it.

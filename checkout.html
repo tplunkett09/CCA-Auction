@@ -3,73 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pickup</title>
+  <title>Checkout</title>
   <link rel="stylesheet" href="css/style.css">
   <style>
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .actions button { min-height: 44px; }
-    /* ---- full-screen item viewer ---- */
-    .viewer { position: fixed; inset: 0; z-index: 100; background: #0b0d10; color: #fff;
-      display: flex; flex-direction: column; overscroll-behavior: contain; }
-    .viewer[hidden] { display: none; }
-    .v-close { position: absolute; z-index: 2; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
-      width: 48px; height: 48px; border-radius: 50%; border: none; padding: 0;
-      background: rgba(255, 255, 255, .92); color: #111; font-size: 30px; line-height: 48px; font-weight: 300;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, .4); cursor: pointer; }
-    .v-close:focus-visible { outline: 3px solid #5ea7dc; outline-offset: 2px; }
-    .v-img { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center;
-      padding: 72px 8px 8px; position: relative; overflow: hidden; }
-    .v-img img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain;
-      border-radius: 6px; opacity: 0; transition: opacity .2s; }
-    .v-img img.loaded { opacity: 1; }
-    .v-msg { position: absolute; color: #bbb; font-size: .95rem; text-align: center; padding: 0 24px; }
-    .v-info { padding: 14px 18px max(18px, env(safe-area-inset-bottom)); background: rgba(0, 0, 0, .35); }
-    .v-info .v-num { font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: #aab; }
-    .v-info .v-title { font-size: 1.25rem; font-weight: 700; margin: 2px 0 6px; }
-    .v-info .v-meta { color: #ccd; font-size: .95rem; }
-    .v-info a { color: #9fd0ff; display: inline-block; margin-top: 10px; padding: 6px 0; }
-    @media (min-width: 900px) { .v-img { padding: 72px 72px 16px; } .v-info { text-align: center; } }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 <main>
-  <form class="card narrow" id="lookup">
+  <form class="card narrow no-print" id="lookup">
     <label>Bidder # <input class="huge" id="bid" type="number" inputmode="numeric" min="1" autofocus></label>
     <button class="primary big" type="submit">Look up</button>
   </form>
 
   <div id="detail"></div>
 
-  <h2>Paid and waiting for pickup</h2>
-  <div class="card table-wrap">
+  <h2 class="no-print">Bidders with a balance due</h2>
+  <div class="card table-wrap no-print">
     <table class="stack">
-      <thead><tr><th>Bid #</th><th>Name</th><th>Items to hand out</th></tr></thead>
-      <tbody id="waiting"></tbody>
+      <thead><tr><th>Bid #</th><th>Name</th><th>Phone</th><th class="num">Items</th><th class="num">Owes</th></tr></thead>
+      <tbody id="owing"></tbody>
     </table>
   </div>
 </main>
 
-<div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="vTitle">
-  <button class="v-close" id="vClose" type="button" aria-label="Close">&times;</button>
-  <div class="v-img" id="vImgWrap">
-    <div class="v-msg" id="vMsg">Loading photo…</div>
-    <img id="vImg" alt="">
-  </div>
-  <div class="v-info">
-    <div class="v-num" id="vNum"></div>
-    <div class="v-title" id="vTitle"></div>
-    <div class="v-meta" id="vMeta"></div>
-    <a id="vFull" target="_blank" rel="noopener">Open full-size photo ↗</a>
-  </div>
-</div>
-
 <script type="module">
-  import { staffPage, listenBidders, listenItems, db, doc, writeBatch, serverTimestamp,
-           esc, money, fullName, phoneFmt, timeFmt, toast, friendlyError } from "./js/firebase.js";
+  import { staffPage, listenBidders, listenItems, db, doc, updateDoc, writeBatch, serverTimestamp,
+           esc, money, fullName, address, phoneFmt, timeFmt, staffName, toast, friendlyError } from "./js/firebase.js";
+  import { shareReceipt, buildReceipt, downloadReceipt } from "./js/receipt.js";
+  import { openItemViewer } from "./js/viewer.js";
 
-  const staffName = (email) => String(email || "").split("@")[0];
-
-  staffPage("Pickup", (user) => {
+  staffPage("Checkout", (user) => {
     let bidders = new Map(), items = [], current = null;
     const won = () => items.filter((i) => i.bidNumber != null);
 
@@ -78,121 +44,114 @@
       if (current == null) { el.innerHTML = ""; return; }
       const b = bidders.get(current);
       const mine = won().filter((i) => i.bidNumber === current);
-      const ready = mine.filter((i) => i.paid && !i.pickedUp);
-      const unpaid = mine.filter((i) => !i.paid);
+      const total = mine.reduce((s, i) => s + Number(i.amount || 0), 0);
+      const paid = mine.filter((i) => i.paid).reduce((s, i) => s + Number(i.amount || 0), 0);
+      const due = total - paid;
+      const unpaidCount = mine.filter((i) => !i.paid).length;
 
       el.innerHTML = `
         <div class="card">
           <div class="bidder-head">
             <div>
               <div class="bn">#${esc(current)}</div>
-              <b>${b ? esc(fullName(b)) : '<span class="pill bad">Not registered</span>'}</b>
-              ${b ? `<br><span class="muted">${esc(phoneFmt(b.phone))}</span>` : ""}
+              <b>${b ? esc(fullName(b)) : '<span class="pill bad">Not registered</span>'}</b><br>
+              ${b ? `<span class="muted">${esc(phoneFmt(b.phone))} · ${esc(address(b))}</span>` : ""}
             </div>
+            <span class="pill ${!mine.length ? "warn" : due > 0 ? "bad" : "ok"}" style="font-size:1rem">
+              ${!mine.length ? "No items won" : due > 0 ? "Balance due" : "Paid in full"}</span>
           </div>
-          ${unpaid.length ? `<p class="pill bad" style="font-size:1rem;margin:12px 0">
-              ${unpaid.length} unpaid item(s) — send to Checkout before handing these out</p>` : ""}
+          <div class="totals">
+            <div><span>Total</span><b>${money(total)}</b></div>
+            <div><span>Paid</span><b>${money(paid)}</b></div>
+            <div><span>Due</span><b style="color:var(--${due > 0 ? "bad" : "ok"})">${money(due)}</b></div>
+          </div>
           ${mine.length ? `
           <div class="table-wrap"><table class="stack">
-            <thead><tr><th>Item #</th><th>Description</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th class="num">Paid price</th><th>Status</th><th class="no-print"></th></tr></thead>
             <tbody>${mine.map((i) => `
               <tr>
-                <td><b style="font-size:1.2rem">${esc(i.itemNumber)}</b></td>
+                <td><b>${esc(i.itemNumber)}</b></td>
                 <td>${esc(i.description)}</td>
-                <td>${i.pickedUp ? `<span class="pill ok">Picked up</span> <span class="muted">${esc(timeFmt(i.pickedUpAt))}${i.pickedUpBy ? " by " + esc(staffName(i.pickedUpBy)) : ""}</span>`
-                     : i.paid ? `<span class="pill warn">Ready</span>` : `<span class="pill bad">Not paid</span>`}</td>
-                <td><div class="actions">
+                <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
+                <td class="num">${money(i.amount)}</td>
+                <td>${i.paid ? `<span class="pill ok">Paid${i.paidMethod ? " · " + esc(i.paidMethod) : ""}</span>
+                       <span class="muted">${esc(timeFmt(i.paidAt))}${i.paidBy ? " by " + esc(staffName(i.paidBy)) : ""}</span>` : `<span class="pill bad">Unpaid</span>`}
+                    ${i.pickedUp ? `<br><span class="pill ok">Picked up</span> <span class="muted">${i.pickedUpBy ? "by " + esc(staffName(i.pickedUpBy)) : ""}</span>` : ""}</td>
+                <td class="no-print"><div class="actions">
                   ${i.imageUrl ? `<button data-view="${esc(i.id)}">View item</button>` : ""}
-                  ${i.pickedUp ? `<button data-undo="${esc(i.id)}">Undo</button>`
-                     : `<button class="ok" data-pick="${esc(i.id)}" ${i.paid ? "" : "disabled"}>Picked up</button>`}
+                  ${i.paid
+                  ? `<button data-undo="${esc(i.id)}" ${i.pickedUp ? "disabled title='Already picked up'" : ""}>Undo</button>`
+                  : `<button class="ok" data-pay="${esc(i.id)}">Mark paid</button>`}
                 </div></td>
               </tr>`).join("")}</tbody>
           </table></div>
-          ${ready.length > 1 ? `<button class="ok big" id="pickAll" style="margin-top:14px">Mark all ${ready.length} ready items picked up</button>` : ""}
-          ` : `<p class="muted">This bidder hasn't won any items.</p>`}
+          ${unpaidCount ? `
+          <div class="row no-print" style="margin-top:14px">
+            <label style="flex:0 1 200px">Payment method
+              <select id="method"><option>Cash</option><option>Check</option><option>Card</option><option>Other</option></select>
+            </label>
+            <button class="ok big" id="payAll">Mark all ${unpaidCount} paid — ${money(due)}</button>
+          </div>` : ""}
+          <div class="row no-print" style="margin-top:14px">
+            <button class="primary" id="shareReceipt">Text / share receipt (PDF)</button>
+            <button id="dlReceipt">Download PDF</button>
+            <button onclick="window.print()">Print</button>
+          </div>
+          ` : `<p class="muted">Nothing recorded for this bidder yet.</p>`}
         </div>`;
 
-      el.querySelectorAll("[data-view]").forEach((btn) => btn.onclick = () =>
-        openViewer(items.find((i) => i.id === btn.dataset.view), btn));
-      el.querySelectorAll("[data-pick]").forEach((btn) => btn.onclick = () => setPicked([btn.dataset.pick], true));
-      el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
-        if (confirm("Mark this item as NOT picked up?")) setPicked([btn.dataset.undo], false);
+      const method = () => document.getElementById("method")?.value || "";
+      el.querySelectorAll("[data-view]").forEach((btn) => btn.onclick = () => {
+        const i = items.find((x) => x.id === btn.dataset.view);
+        if (!i) return;
+        openItemViewer({ ...i, details: [
+          i.retailValue != null ? `Retail value ${money(i.retailValue)}` : "",
+          `Winning bid ${money(i.amount)}`,
+          i.paid ? `Paid${i.paidMethod ? " (" + i.paidMethod + ")" : ""}` : "Not paid yet",
+        ] }, btn);
       });
-      const all = document.getElementById("pickAll");
-      if (all) all.onclick = () => setPicked(ready.map((i) => i.id), true);
+      el.querySelectorAll("[data-pay]").forEach((btn) => btn.onclick = () => setPaid([btn.dataset.pay], true, method()));
+      el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
+        if (confirm("Undo payment for this item?")) setPaid([btn.dataset.undo], false);
+      });
+      const shareBtn = document.getElementById("shareReceipt");
+      if (shareBtn) {
+        shareBtn.onclick = async () => {
+          try { const r = await shareReceipt(current, b, mine); if (r === "downloaded") toast("Receipt PDF downloaded."); }
+          catch (err) { toast("Couldn't make the PDF: " + err.message, "err"); }
+        };
+        document.getElementById("dlReceipt").onclick = () => {
+          try { downloadReceipt(buildReceipt(current, b, mine), `Receipt-${current}.pdf`); }
+          catch (err) { toast("Couldn't make the PDF: " + err.message, "err"); }
+        };
+      }
+      const all = document.getElementById("payAll");
+      if (all) all.onclick = () => setPaid(mine.filter((i) => !i.paid).map((i) => i.id), true, method());
     }
 
-    // ---- full-screen item viewer ----
-    const viewer = document.getElementById("viewer"), vImg = document.getElementById("vImg"),
-          vMsg = document.getElementById("vMsg"), vClose = document.getElementById("vClose");
-    let returnFocus = null;
-    // ImageKit can resize on the fly: ask for a phone-sharp version (max 1200px wide, never enlarged)
-    // instead of the original camera file. Other hosts get the original link.
-    const largeUrl = (url) => {
-      try {
-        const u = new URL(url);
-        if (u.hostname.endsWith("imagekit.io") && !u.searchParams.has("tr") && !u.pathname.includes("/tr:")) {
-          u.searchParams.set("tr", "w-1200,h-1600,c-at_max");
-        }
-        return u.href;
-      } catch { return url; }
-    };
-    function openViewer(i, fromBtn) {
-      if (!i?.imageUrl) return;
-      returnFocus = fromBtn || null;
-      const b = bidders.get(i.bidNumber);
-      document.getElementById("vNum").textContent = `Item #${i.itemNumber}`;
-      document.getElementById("vTitle").textContent = i.description || "";
-      document.getElementById("vMeta").innerHTML = [
-        i.retailValue != null ? `Retail value ${money(i.retailValue)}` : "",
-        i.bidNumber != null ? `Won by #${esc(i.bidNumber)} ${esc(fullName(b))}` : "",
-        i.pickedUp ? "✓ Picked up" : i.paid ? "Paid — ready to hand out" : "Not paid yet",
-      ].filter(Boolean).join(" · ");
-      document.getElementById("vFull").href = i.imageUrl;
-      vImg.className = ""; vImg.alt = i.description || `Item ${i.itemNumber}`;
-      vMsg.textContent = "Loading photo…"; vMsg.hidden = false;
-      vImg.onload = () => { vImg.className = "loaded"; vMsg.hidden = true; };
-      vImg.onerror = () => { vMsg.textContent = "Couldn't load this photo. Check the image link on the Items page."; };
-      vImg.src = largeUrl(i.imageUrl);
-      viewer.hidden = false;
-      document.body.style.overflow = "hidden";
-      history.pushState({ viewer: true }, "");   // so the phone's Back button closes the photo
-      vClose.focus();
-    }
-    function hideViewer() {
-      viewer.hidden = true;
-      document.body.style.overflow = "";
-      vImg.removeAttribute("src");
-      returnFocus?.focus({ preventScroll: true });
-    }
-    function closeViewer() { if (history.state?.viewer) history.back(); else hideViewer(); }
-    addEventListener("popstate", () => { if (!viewer.hidden) hideViewer(); });
-    vClose.onclick = closeViewer;
-    // Tapping the dark area around the photo also closes it.
-    document.getElementById("vImgWrap").onclick = (e) => { if (e.target !== vImg) closeViewer(); };
-    addEventListener("keydown", (e) => { if (e.key === "Escape" && !viewer.hidden) closeViewer(); });
-
-    async function setPicked(ids, picked) {
+    async function setPaid(ids, paid, method = "") {
       const batch = writeBatch(db);
-      ids.forEach((id) => batch.update(doc(db, "items", id), picked
-        ? { pickedUp: true, pickedUpAt: serverTimestamp(), pickedUpBy: user.email }
-        : { pickedUp: false, pickedUpAt: null, pickedUpBy: "" }));
-      try { await batch.commit(); toast(picked ? `${ids.length} item(s) picked up.` : "Pickup undone."); }
+      ids.forEach((id) => batch.update(doc(db, "items", id), paid
+        ? { paid: true, paidAt: serverTimestamp(), paidMethod: method, paidBy: user.email }
+        : { paid: false, paidAt: null, paidMethod: "", paidBy: "" }));
+      try { await batch.commit(); toast(paid ? `Marked ${ids.length} item(s) paid.` : "Payment undone."); }
       catch (err) { toast(friendlyError(err), "err"); }
     }
 
-    function renderWaiting() {
-      const wait = new Map();
-      won().filter((i) => i.paid && !i.pickedUp).forEach((i) => {
-        if (!wait.has(i.bidNumber)) wait.set(i.bidNumber, []);
-        wait.get(i.bidNumber).push(i.itemNumber);
+    function renderOwing() {
+      const owe = new Map();
+      won().filter((i) => !i.paid).forEach((i) => {
+        const o = owe.get(i.bidNumber) || { n: 0, amt: 0 };
+        o.n++; o.amt += Number(i.amount || 0); owe.set(i.bidNumber, o);
       });
-      document.getElementById("waiting").innerHTML = [...wait.entries()].sort((a, b) => a[0] - b[0])
-        .map(([n, list]) => `<tr class="click" data-bid="${n}"><td><b>${n}</b></td>
-          <td>${esc(fullName(bidders.get(n)))}</td><td>${list.map(esc).join(", ")}</td></tr>`).join("")
-        || `<tr><td colspan="3" class="muted">Nothing waiting.</td></tr>`;
+      const rows = [...owe.entries()].sort((a, b) => a[0] - b[0]);
+      document.getElementById("owing").innerHTML = rows.map(([n, o]) => {
+        const b = bidders.get(n);
+        return `<tr class="click" data-bid="${n}"><td><b>${n}</b></td><td>${esc(fullName(b))}</td>
+          <td>${esc(phoneFmt(b?.phone))}</td><td class="num">${o.n} item${o.n > 1 ? "s" : ""}</td><td class="num">${money(o.amt)}</td></tr>`;
+      }).join("") || `<tr><td colspan="5" class="muted">Everyone is paid up.</td></tr>`;
     }
-    document.getElementById("waiting").onclick = (e) => {
+    document.getElementById("owing").onclick = (e) => {
       const tr = e.target.closest("tr[data-bid]");
       if (tr) { open(Number(tr.dataset.bid)); window.scrollTo({ top: 0, behavior: "smooth" }); }
     };
@@ -204,7 +163,7 @@
       if (Number.isInteger(n) && n > 0) open(n);
     };
 
-    const renderAll = () => { renderDetail(); renderWaiting(); };
+    const renderAll = () => { renderDetail(); renderOwing(); };
     listenBidders((m) => { bidders = m; renderAll(); });
     listenItems((l) => { items = l; renderAll(); });
   });

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Staff</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .checks { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin: 4px 0 12px; }
+    .check { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line);
+      border-radius: 10px; background: var(--bg); color: var(--ink); margin: 0; cursor: pointer; }
+    .check input { width: 22px; height: 22px; margin: 1px 0 0; flex: 0 0 auto; accent-color: var(--accent); }
+    .check small { display: block; color: var(--muted); }
+    .check.admin { border-style: dashed; }
+    .person { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center;
+      padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .person:last-child { border-bottom: none; }
+    .person .pills { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    .person .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .person button { min-height: 40px; }
+    .pill.blue { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+    fieldset { border: none; padding: 0; margin: 0; }
+    legend { font-size: .9rem; color: var(--muted); margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+<main>
+  <form class="card" id="f">
+    <h1 id="formTitle">Add a staff member</h1>
+    <div class="row">
+      <label>Email <input name="email" id="email" type="email" required autocomplete="off" autocapitalize="off" maxlength="120"></label>
+      <label>Name (optional) <input name="name" maxlength="60" autocomplete="off"></label>
+    </div>
+    <label id="pwWrap">Password for their sign-in (optional, 6+ characters)
+      <input name="password" type="text" minlength="6" maxlength="60" autocomplete="off" autocapitalize="off"
+             placeholder="Leave blank if they already have a login">
+    </label>
+    <fieldset>
+      <legend>Pages they can use</legend>
+      <div class="checks" id="checks"></div>
+    </fieldset>
+    <label class="check admin"><input type="checkbox" name="admin" id="admin">
+      <span><b>Admin</b><small>Every page, plus this Staff page, bid-number controls and "Start fresh"</small></span></label>
+    <p class="err" id="err" style="margin-top:10px"></p>
+    <div class="row">
+      <button class="primary big" type="submit" id="save">Save staff member</button>
+      <button class="big" type="button" id="clear" style="flex:0 1 140px">Clear</button>
+    </div>
+  </form>
+
+  <h2>Staff</h2>
+  <div class="card" id="list"><p class="muted">Loading…</p></div>
+  <p class="muted">Owners named in the Firestore rules always have full access and don't need to be listed here.
+    Removing someone takes away their access immediately; their sign-in itself stays in Firebase but can't open anything.</p>
+</main>
+
+<script type="module">
+  import { staffPage, PAGES, db, doc, setDoc, deleteDoc, collection, onSnapshot, serverTimestamp,
+           createStaffLogin, sendPasswordResetEmail, auth, esc, toast, friendlyError } from "./js/firebase.js";
+
+  staffPage("Staff", (user) => {
+    const f = document.getElementById("f"), err = document.getElementById("err");
+    const label = Object.fromEntries(PAGES.map(([, k, l]) => [k, l]));
+    let staff = [], editing = null;
+
+    document.getElementById("checks").innerHTML = PAGES.map(([, key, lbl, desc]) => `
+      <label class="check"><input type="checkbox" name="page" value="${key}">
+        <span><b>${esc(lbl)}</b><small>${esc(desc)}</small></span></label>`).join("");
+    const pageBoxes = () => [...f.querySelectorAll('input[name="page"]')];
+    const syncAdmin = () => pageBoxes().forEach((c) => {
+      c.disabled = f.admin.checked; if (f.admin.checked) c.checked = true;
+    });
+    f.admin.onchange = syncAdmin;
+
+    function resetForm() {
+      editing = null; f.reset(); syncAdmin(); err.textContent = "";
+      f.email.readOnly = false;
+      document.getElementById("formTitle").textContent = "Add a staff member";
+      document.getElementById("save").textContent = "Save staff member";
+    }
+    document.getElementById("clear").onclick = resetForm;
+
+    function render() {
+      const el = document.getElementById("list");
+      if (!staff.length) { el.innerHTML = `<p class="muted" style="margin:0">No staff added yet.</p>`; return; }
+      el.innerHTML = staff.map((s) => `
+        <div class="person">
+          <div>
+            <b>${esc(s.name || s.id)}</b>${s.name ? `<br><span class="muted">${esc(s.id)}</span>` : ""}
+            <div class="pills">${s.admin ? `<span class="pill blue">Admin — all pages</span>`
+              : (s.pages || []).length ? s.pages.filter((k) => label[k]).map((k) => `<span class="pill ok">${esc(label[k])}</span>`).join("")
+              : `<span class="pill bad">No pages</span>`}</div>
+          </div>
+          <div class="btns">
+            <button data-edit="${esc(s.id)}">Edit</button>
+            <button data-reset="${esc(s.id)}">Send password reset</button>
+            ${s.id === user.email.toLowerCase() ? "" : `<button class="danger" data-del="${esc(s.id)}">Remove</button>`}
+          </div>
+        </div>`).join("");
+    }
+
+    document.getElementById("list").onclick = async (e) => {
+      const { edit, reset, del } = e.target.dataset;
+      if (edit) {
+        const s = staff.find((x) => x.id === edit);
+        resetForm(); editing = s.id;
+        f.email.value = s.id; f.email.readOnly = true; f.name.value = s.name || "";
+        f.admin.checked = !!s.admin;
+        pageBoxes().forEach((c) => (c.checked = (s.pages || []).includes(c.value)));
+        syncAdmin();
+        document.getElementById("formTitle").textContent = `Edit ${s.name || s.id}`;
+        document.getElementById("save").textContent = "Save changes";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      if (reset) {
+        try { await sendPasswordResetEmail(auth, reset); toast(`Password reset email sent to ${reset}.`); }
+        catch (x) { toast(friendlyError(x), "err"); }
+      }
+      if (del && confirm(`Remove ${del}? They will immediately lose access to all staff pages.`)) {
+        try { await deleteDoc(doc(db, "staff", del)); toast(`${del} removed.`); if (editing === del) resetForm(); }
+        catch (x) { toast(friendlyError(x), "err"); }
+      }
+    };
+
+    f.onsubmit = async (e) => {
+      e.preventDefault(); err.textContent = "";
+      const email = f.email.value.trim().toLowerCase();
+      const pages = f.admin.checked ? [] : pageBoxes().filter((c) => c.checked).map((c) => c.value);
+      if (!f.admin.checked && !pages.length) return (err.textContent = "Tick at least one page (or Admin).");
+      const password = f.password.value;
+      if (password && password.length < 6) return (err.textContent = "Password must be at least 6 characters.");
+      const btn = document.getElementById("save"); btn.disabled = true;
+      try {
+        let note = "";
+        if (password) {
+          const r = await createStaffLogin(email, password);
+          note = r === "exists" ? " They already had a sign-in, so their existing password still works." : " Their sign-in was created.";
+        }
+        await setDoc(doc(db, "staff", email), { name: f.name.value.trim(), pages, admin: f.admin.checked,
+          updatedAt: serverTimestamp(), updatedBy: user.email });
+        toast(`${email} saved.${note}`);
+        resetForm();
+      } catch (x) {
+        const c = String(x.code || "");
+        err.textContent = c.includes("invalid-email") ? "That email address isn't valid."
+          : c.includes("weak-password") ? "Password is too weak — use at least 6 characters."
+          : c.includes("operation-not-allowed") ? "Email/password sign-in is turned off in Firebase (Authentication → Sign-in method)."
+          : friendlyError(x);
+      } finally { btn.disabled = false; }
+    };
+
+    onSnapshot(collection(db, "staff"), (snap) => {
+      staff = [];
+      snap.forEach((d) => staff.push({ id: d.id, ...d.data() }));
+      staff.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+      render();
+    }, (e) => (document.getElementById("list").innerHTML = `<p class="err">${esc(friendlyError(e))}</p>`));
+
+    resetForm();
+  });
+</script>
+</body>
+</html>

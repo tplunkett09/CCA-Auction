@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pickup</title>
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { min-height: 44px; }
+  </style>
 </head>
 <body>
 <main>
@@ -24,9 +28,14 @@
   </div>
 </main>
 
+</div>
+
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, writeBatch, serverTimestamp,
-           esc, fullName, phoneFmt, timeFmt, staffName, toast, friendlyError } from "./js/firebase.js";
+           esc, money, fullName, phoneFmt, timeFmt, toast, friendlyError } from "./js/firebase.js";
+  import { openItemViewer } from "./js/viewer.js";
+
+  const staffName = (email) => String(email || "").split("@")[0];
 
   staffPage("Pickup", (user) => {
     let bidders = new Map(), items = [], current = null;
@@ -60,14 +69,26 @@
                 <td>${esc(i.description)}</td>
                 <td>${i.pickedUp ? `<span class="pill ok">Picked up</span> <span class="muted">${esc(timeFmt(i.pickedUpAt))}${i.pickedUpBy ? " by " + esc(staffName(i.pickedUpBy)) : ""}</span>`
                      : i.paid ? `<span class="pill warn">Ready</span>` : `<span class="pill bad">Not paid</span>`}</td>
-                <td>${i.pickedUp ? `<button data-undo="${esc(i.id)}">Undo</button>`
-                     : `<button class="ok" data-pick="${esc(i.id)}" ${i.paid ? "" : "disabled"}>Picked up</button>`}</td>
+                <td><div class="actions">
+                  ${i.imageUrl ? `<button data-view="${esc(i.id)}">View item</button>` : ""}
+                  ${i.pickedUp ? `<button data-undo="${esc(i.id)}">Undo</button>`
+                     : `<button class="ok" data-pick="${esc(i.id)}" ${i.paid ? "" : "disabled"}>Picked up</button>`}
+                </div></td>
               </tr>`).join("")}</tbody>
           </table></div>
           ${ready.length > 1 ? `<button class="ok big" id="pickAll" style="margin-top:14px">Mark all ${ready.length} ready items picked up</button>` : ""}
           ` : `<p class="muted">This bidder hasn't won any items.</p>`}
         </div>`;
 
+      el.querySelectorAll("[data-view]").forEach((btn) => btn.onclick = () => {
+        const i = items.find((x) => x.id === btn.dataset.view);
+        if (!i) return;
+        openItemViewer({ ...i, details: [
+          i.retailValue != null ? `Retail value ${money(i.retailValue)}` : "",
+          i.bidNumber != null ? `Won by #${i.bidNumber} ${fullName(bidders.get(i.bidNumber))}` : "",
+          i.pickedUp ? "✓ Picked up" : i.paid ? "Paid — ready to hand out" : "Not paid yet",
+        ] }, btn);
+      });
       el.querySelectorAll("[data-pick]").forEach((btn) => btn.onclick = () => setPicked([btn.dataset.pick], true));
       el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
         if (confirm("Mark this item as NOT picked up?")) setPicked([btn.dataset.undo], false);

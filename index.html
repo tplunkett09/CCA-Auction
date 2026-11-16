@@ -13,14 +13,16 @@
 
   <h2>Stations</h2>
   <div class="grid">
-    <a class="card" href="items.html"><b>Items</b><br><span class="muted">Load item #s, descriptions and retail values</span></a>
-    <a class="card" href="bidders.html"><b>Bidders</b><br><span class="muted">Look up names, numbers, phone, address</span></a>
-    <a class="card" href="winners.html"><b>Winners</b><br><span class="muted">Enter winning bid # and amount per item</span></a>
-    <a class="card" href="checkout.html"><b>Checkout</b><br><span class="muted">See what a bidder owes and mark paid</span></a>
-    <a class="card" href="pickup.html"><b>Pickup</b><br><span class="muted">Hand out paid items and mark picked up</span></a>
-    <a class="card" href="qr.html"><b>QR sign</b><br><span class="muted">Print the sign-up QR code</span></a>
+    <a class="card" data-page="items" href="items.html"><b>Items</b><br><span class="muted">Load item #s, descriptions and retail values</span></a>
+    <a class="card" data-page="bidders" href="bidders.html"><b>Bidders</b><br><span class="muted">Look up names, numbers, phone, address</span></a>
+    <a class="card" data-page="winners" href="winners.html"><b>Winners</b><br><span class="muted">Enter winning bid # and amount per item</span></a>
+    <a class="card" data-page="checkout" href="checkout.html"><b>Checkout</b><br><span class="muted">See what a bidder owes and mark paid</span></a>
+    <a class="card" data-page="pickup" href="pickup.html"><b>Pickup</b><br><span class="muted">Hand out paid items and mark picked up</span></a>
+    <a class="card" data-page="qr" href="qr.html"><b>QR sign</b><br><span class="muted">Print the sign-up QR code</span></a>
     <a class="card" href="signup.html?new" target="_blank"><b>Register a bidder</b><br><span class="muted">Opens the public sign-up form</span></a>
+    <a class="card" data-page="admin" href="access.html"><b>Staff</b><br><span class="muted">Add people and choose which pages they can use</span></a>
   </div>
+  <div id="adminOnly" hidden>
   <h2>Bid numbers</h2>
   <div class="card">
     <p style="margin-top:0">Next bidder to register gets <b class="bn" id="nextNum" style="font-size:1.4rem">…</b>
@@ -36,6 +38,7 @@
       <button class="danger" id="fresh">Delete test data &amp; restart numbering</button>
     </details>
   </div>
+  </div>
   <div class="card" id="demoBox" hidden>
     <b>Demo mode</b>
     <p class="muted">Data is saved in this browser only. Open stations in separate tabs to watch them update live.
@@ -48,7 +51,13 @@
   import { staffPage, listenBidders, listenItems, money, db, doc, getDoc, setDoc,
            FIRST_BID_NUMBER, toast, friendlyError, writeBatch, DEMO_MODE, resetDemo } from "./js/firebase.js";
 
-  staffPage("Home", async () => {
+  staffPage("Home", async (user, access) => {
+    // Only show shortcuts to pages this person can use.
+    document.querySelectorAll("[data-page]").forEach((a) => {
+      const k = a.dataset.page;
+      a.hidden = k === "admin" ? !access.admin : !access.admin && !access.pages.includes(k);
+    });
+    document.getElementById("adminOnly").hidden = !access.admin;
     if (DEMO_MODE) {
       document.getElementById("demoBox").hidden = false;
       document.getElementById("reset").onclick = () => {
@@ -59,8 +68,8 @@
         }
       };
     }
-    // Make sure the bid-number counter exists so public sign-up works.
-    try {
+    // Make sure the bid-number counter exists so public sign-up works (admins only).
+    if (access.admin) try {
       const ref = doc(db, "counters", "bidders");
       if (!(await getDoc(ref)).exists()) {
         await setDoc(ref, { next: FIRST_BID_NUMBER });

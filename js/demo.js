@@ -92,6 +92,11 @@ function apply(ops) {
 }
 
 export async function getDoc(ref) { await delay(); return snapDoc(ref); }
+export async function getDocs(ref) {
+  await delay();
+  const docs = Object.keys(store[ref.name] || {}).map((id) => snapDoc({ col: ref.name, id }));
+  return { forEach: (cb) => docs.forEach(cb), size: docs.length, docs };
+}
 export async function setDoc(ref, data, opts = {}) { await delay(); apply([{ type: "set", ref, data, merge: opts.merge }]); }
 export async function updateDoc(ref, data) { await delay(); apply([{ type: "update", ref, data }]); }
 export async function deleteDoc(ref) { await delay(); apply([{ type: "delete", ref }]); }
@@ -121,7 +126,10 @@ export async function runTransaction(_db, fn) {
 
 // ---------- Auth look-alikes: everyone is signed in as a demo staff member ----------
 export const auth = { demo: true };
-export function onAuthStateChanged(_auth, cb) { queueMicrotask(() => cb({ email: "demo@local" })); return () => {}; }
+// In demo mode you're signed in as the owner "demo@local". To try what a volunteer sees, add them
+// on the Staff page, then run  localStorage.demoEmail = "their@email"  in the browser console and reload.
+const demoEmail = () => { try { return localStorage.getItem("demoEmail") || "demo@local"; } catch { return "demo@local"; } };
+export function onAuthStateChanged(_auth, cb) { queueMicrotask(() => cb({ email: demoEmail() })); return () => {}; }
 export const signInWithEmailAndPassword = async () => ({ user: { email: "demo@local" } });
-export const signOut = async () => {};
+export const signOut = async () => { try { localStorage.removeItem("demoEmail"); } catch {} };
 export const sendPasswordResetEmail = async () => {};

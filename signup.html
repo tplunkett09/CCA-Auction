@@ -35,10 +35,11 @@
     <p>Pick up your <b>bid card #<span id="doneNumber2"></span></b> at the check-in table.<br><b>Take a screenshot</b> so you don't forget it.</p>
     <button class="big" id="another">Register someone else</button>
   </div>
+  <p class="muted" style="text-align:center;font-size:.8rem"><a href="index.html" style="color:inherit">Staff</a></p>
 </main>
 
 <script type="module">
-  import { registerBidder, EVENT_NAME, friendlyError, esc } from "./js/firebase.js";
+  import { registerBidder, EVENT_NAME } from "./js/firebase.js";
 
   document.title = `Register · ${EVENT_NAME}`;
   document.getElementById("title").textContent = `${EVENT_NAME} — Bidder Registration`;
@@ -70,7 +71,11 @@
       try { localStorage.setItem("myBid", JSON.stringify({ num, name: v.firstName })); } catch {}
       showDone(num, v.firstName);
     } catch (err) {
-      document.getElementById("err").textContent = friendlyError(err);
+      const code = String(err?.code || "");
+      document.getElementById("err").textContent =
+        code.includes("unavailable") ? "No internet connection — please check your signal and try again."
+        : code.includes("permission") ? "Sorry, registration couldn't be completed. Please see the check-in table. (code: permission-denied)"
+        : (err?.message || "Something went wrong — please try again.");
     } finally {
       go.disabled = false; go.textContent = "Get my bid number";
     }
