@@ -18,6 +18,14 @@ export const EVENT_NAME = "CCA Auction";
 // Text at the bottom of every PDF receipt (e.g. your nonprofit name and EIN).
 export const RECEIPT_FOOTER = "Thank you for supporting CCA! Please keep this receipt for your records.";
 
+// ---- Photo uploads to ImageKit (see README, "Phone camera photos") ----
+// Public key: ImageKit dashboard → Developer options → API keys → Public key (safe to publish).
+export const IMAGEKIT_PUBLIC_KEY = "public_8d0D0oeKDiSg2PIotqUhX1vMRko=";
+// Your Cloudflare Worker link, e.g. "https://cca-auction-photos.yourname.workers.dev"
+export const IMAGEKIT_SIGNER_URL = "https://cca-auction-photos.2009buckshot.workers.dev";
+// Folder in your ImageKit media library where item photos are saved.
+export const IMAGEKIT_FOLDER = "/cca-auction";
+
 // Item categories, in the order item numbers are assigned (Food first, then Gift Cards, ...).
 export const CATEGORIES = ["Food", "Gift Cards", "Kitchen", "Home Decor", "Apparel", "Kids",
   "Accessories", "Hunting/Outdoor", "Automotive", "Farm"];
