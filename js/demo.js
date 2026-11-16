@@ -59,7 +59,8 @@ const snapDoc = (ref) => {
 };
 
 const listeners = new Set();
-export function onSnapshot(ref, next) {
+export function onSnapshot(ref, optsOrNext, maybeNext) {
+  const next = typeof optsOrNext === "function" ? optsOrNext : maybeNext;
   const l = { name: ref.name, next };
   listeners.add(l);
   queueMicrotask(() => fire(l));
@@ -92,6 +93,8 @@ function apply(ops) {
 }
 
 export async function getDoc(ref) { await delay(); return snapDoc(ref); }
+export const query = (ref) => ref;
+export const limit = () => null;
 export async function getDocs(ref) {
   await delay();
   const docs = Object.keys(store[ref.name] || {}).map((id) => snapDoc({ col: ref.name, id }));

@@ -12,13 +12,24 @@ if (DEMO_MODE) {
   fs = await import(FB + "firebase-firestore.js");
   au = await import(FB + "firebase-auth.js");
   const app = initializeApp(firebaseConfig);
-  db = fs.getFirestore(app);
+  // Keep a saved copy of the data on each phone/computer. When a page opens, the saved copy shows
+  // instantly and Firestore only sends (and charges for) what changed since — instead of re-reading
+  // every item and bidder on every page load. Falls back to normal mode if the browser can't save
+  // (e.g. some private/incognito windows).
+  try {
+    db = fs.initializeFirestore(app, {
+      localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
+    });
+  } catch (e) {
+    console.warn("Saved copy unavailable, using normal mode:", e);
+    db = fs.getFirestore(app);
+  }
   auth = au.getAuth(app);
 }
 export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER };
 export const {
   collection, doc, onSnapshot, runTransaction, setDoc, updateDoc,
-  deleteDoc, getDoc, getDocs, writeBatch, serverTimestamp
+  deleteDoc, getDoc, getDocs, writeBatch, serverTimestamp, query, limit
 } = fs;
 const { onAuthStateChanged, signInWithEmailAndPassword, signOut } = au;
 export const { sendPasswordResetEmail } = au;
@@ -87,16 +98,40 @@ export function friendlyError(e) {
 // list live in memory. Every change anyone makes shows up on every open screen instantly.
 // If a live connection is ever refused (e.g. rules still publishing, login changed),
 // show why and keep retrying every few seconds, so a station never silently freezes.
+// With the saved copy, a phone that loses signal keeps showing the last data it had instead of an
+// error — so warn clearly when what's on screen hasn't been confirmed by the server for a few seconds.
+// (Watching connection status is free; only changed items/bidders count as reads.)
+const offline = new Map();
 function liveCollection(name, onData) {
-  let unsub = null;
+  let unsub = null, timer = null, first = true;
   const start = () => {
-    unsub = onSnapshot(collection(db, name), (snap) => { clearBanner(name); onData(snap); }, (e) => {
+    unsub = onSnapshot(collection(db, name), { includeMetadataChanges: true }, (snap) => {
+      clearBanner(name);
+      const cached = !!snap.metadata?.fromCache;
+      clearTimeout(timer);
+      if (cached) timer = setTimeout(() => setOffline(name, true), 4000);
+      else setOffline(name, false);
+      // Redraw only when the data itself changed (not for connection-status-only updates).
+      const dataChanged = typeof snap.docChanges !== "function" || snap.docChanges().length > 0;
+      if (first || dataChanged) { first = false; onData(snap); }
+    }, (e) => {
       showBanner(name, friendlyError(e) + " Retrying…");
       setTimeout(start, 5000);
     });
   };
   start();
   return () => unsub && unsub();
+}
+function setOffline(name, on) {
+  if (on) offline.set(name, true); else offline.delete(name);
+  let bar = document.getElementById("offlineBar");
+  if (!offline.size) { bar?.remove(); return; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "offlineBar";
+    bar.textContent = "⚠ No connection — showing the last saved data. Changes will sync when the connection is back.";
+    document.querySelector("main")?.prepend(bar);
+  }
 }
 export function listenBidders(cb) {
   return liveCollection("bidders", (snap) => {
@@ -160,8 +195,27 @@ const ADMIN_PAGES = [["access.html", "Staff"], ["test.html", "Test"]];
 const ALL_KEYS = PAGES.map((p) => p[1]);
 export let currentAccess = null;
 
+const ACCESS_KEY = "staffAccess";
+const ACCESS_TTL = 10 * 60 * 1000;   // re-check every 10 minutes, so access changes still take effect
+function cachedAccess(email) {
+  try {
+    const c = JSON.parse(sessionStorage.getItem(ACCESS_KEY) || "null");
+    if (c && c.email === email && Date.now() - c.t < ACCESS_TTL) return c.access;
+  } catch {}
+  return null;
+}
+function rememberAccess(email, access) {
+  try { sessionStorage.setItem(ACCESS_KEY, JSON.stringify({ email, access, t: Date.now() })); } catch {}
+}
 async function loadAccess(user) {
   const email = String(user.email || "").toLowerCase();
+  const hit = cachedAccess(email);
+  if (hit) return hit;
+  const access = await checkAccess(user, email);
+  if (access.pages.length || access.admin) rememberAccess(email, access);
+  return access;
+}
+async function checkAccess(user, email) {
   if (DEMO_MODE && email === "demo@local") return { admin: true, owner: true, pages: ALL_KEYS };
   const me = await getDoc(doc(db, "staff", email));
   if (me.exists()) {
@@ -171,7 +225,7 @@ async function loadAccess(user) {
   }
   if (DEMO_MODE) return { admin: false, pages: [] };
   // No staff record: owners are allowed to list the staff collection, everyone else isn't.
-  try { await getDocs(collection(db, "staff")); return { admin: true, owner: true, pages: ALL_KEYS }; }
+  try { await getDocs(query(collection(db, "staff"), limit(1))); return { admin: true, owner: true, pages: ALL_KEYS }; }
   catch (e) { if (String(e.code).includes("permission")) return { admin: false, pages: [] }; throw e; }
 }
 
@@ -196,7 +250,10 @@ export function staffPage(title, onReady) {
     if (!user) { nav.hidden = true; renderLogin(main); return; }
     document.getElementById("who").innerHTML =
       `${esc(user.email)} <button class="link" id="signout">Sign out</button>`;
-    document.getElementById("signout").onclick = () => signOut(auth).then(() => location.reload());
+    document.getElementById("signout").onclick = () => {
+      try { sessionStorage.removeItem(ACCESS_KEY); } catch {}
+      signOut(auth).then(() => location.reload());
+    };
     if (started) return;
     started = true;
     main.innerHTML = `<p class="muted">Checking your access…</p>`;
