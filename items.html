@@ -21,6 +21,8 @@
     .cat { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px;
       background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: 4px; }
     .numbering { border-left: 4px solid var(--accent); }
+    .photo-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
+    .photo-btns button { min-height: 44px; flex: 1 1 140px; }
     .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 4px 0 12px; max-width: 320px; }
     .seg label { flex: 1; margin: 0; color: var(--ink); }
     .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
@@ -63,6 +65,11 @@
         <input name="retailValue" type="number" inputmode="decimal" step="0.01" min="0">
       </label>
     </div>
+    <div class="photo-btns">
+      <button type="button" id="takePhoto">📷 Take photo</button>
+      <button type="button" id="choosePhoto">Choose from library</button>
+    </div>
+    <p class="muted" id="photoStatus" style="margin:-4px 0 8px;font-size:.9rem"></p>
     <div class="img-row">
       <label>Image URL (optional)
         <input name="imageUrl" id="imageUrl" type="url" inputmode="url" maxlength="600" autocomplete="off"
@@ -121,8 +128,10 @@
   import { staffPage, listenBidders, listenItems, db, doc, getDoc, setDoc, deleteDoc, runTransaction, serverTimestamp,
            esc, money, fullName, toast, friendlyError, donorKey, naturalSort, hasItemNumber, newItemId,
            CATEGORIES, FIRST_ITEM_NUMBER } from "./js/firebase.js";
+  import { pickPhoto, uploadPhoto, photosReady, notReadyMessage } from "./js/photos.js";
 
   staffPage("Items", (user) => {
+    const uploading = new Map();   // item id -> progress text, for the Photo buttons in the list
     let bidders = new Map(), items = [], editingId = null, numberingStarted = false, counterNext = null, lastNumbered = -1;
     const f = document.getElementById("f");
     const counterRef = doc(db, "counters", "items");
@@ -284,6 +293,33 @@
     };
     imgIn.oninput = showPreview;
 
+    // ---------- phone camera → ImageKit ----------
+    const photoStatus = document.getElementById("photoStatus");
+    const photoName = (i) => ["item", hasItemNumber(i) ? i.itemNumber : "", (i.description || "").slice(0, 30)].filter(Boolean).join("-");
+    function formPhoto(capture) {
+      if (!photosReady()) { photoStatus.textContent = notReadyMessage; return; }
+      pickPhoto(capture, async (file) => {
+        const btns = [document.getElementById("takePhoto"), document.getElementById("choosePhoto"), document.getElementById("save")];
+        btns.forEach((b) => (b.disabled = true));
+        const forId = editingId;
+        try {
+          const it = items.find((x) => x.id === forId) || { description: f.description.value };
+          const url = await uploadPhoto(file, { user, name: photoName(it), onProgress: (p, txt) => (photoStatus.textContent = txt) });
+          if (forId && editingId === forId) {
+            imgIn.value = url; showPreview();
+            await setDoc(doc(db, "items", forId), { imageUrl: url, updatedAt: serverTimestamp() }, { merge: true });
+            photoStatus.textContent = "✓ Photo saved to this item.";
+          } else if (!forId) {
+            imgIn.value = url; showPreview();
+            photoStatus.textContent = "✓ Photo uploaded — tap Save item to keep it with this item.";
+          }
+        } catch (x) { photoStatus.textContent = ""; toast(x.message || friendlyError(x), "err"); }
+        finally { btns.forEach((b) => (b.disabled = false)); }
+      });
+    }
+    document.getElementById("takePhoto").onclick = () => formPhoto(true);
+    document.getElementById("choosePhoto").onclick = () => formPhoto(false);
+
     // ---------- donor: suggest names already used, and fill in their address/phone ----------
     const donorIn = document.getElementById("donorName"), donorHint = document.getElementById("donorHint");
     function knownDonors() {
@@ -306,7 +342,7 @@
 
     // ---------- form ----------
     function resetForm() {
-      editingId = null; f.reset(); showPreview(); donorHint.textContent = "";
+      editingId = null; f.reset(); showPreview(); donorHint.textContent = ""; photoStatus.textContent = "";
       document.getElementById("formTitle").textContent = "Add an item";
       document.getElementById("existing").textContent = "";
       document.getElementById("save").textContent = "Save item";
@@ -370,6 +406,7 @@
           <td class="num">${i.bidNumber != null ? money(i.amount) : ""}</td>
           <td class="photo">${thumbHtml(i.imageUrl, i.description)}</td>
           <td><button data-edit="${esc(i.id)}">Edit</button>
+            <button data-photo="${esc(i.id)}" ${uploading.has(i.id) ? "disabled" : ""}>${uploading.has(i.id) ? esc(uploading.get(i.id)) : i.imageUrl ? "📷 Retake" : "📷 Photo"}</button>
             ${i.bidNumber == null ? `<button class="danger" data-del="${esc(i.id)}">Delete</button>` : ""}</td>
         </tr>`).join("") || `<tr><td colspan="7" class="muted">No items yet — add one above or paste a list.</td></tr>`;
       renderNumbering();
@@ -377,8 +414,22 @@
     document.getElementById("q").oninput = render;
 
     document.getElementById("rows").onclick = async (e) => {
-      const { edit, del } = e.target.dataset;
-      const i = items.find((x) => x.id === (edit || del));
+      const { edit, del, photo } = e.target.dataset;
+      const i = items.find((x) => x.id === (edit || del || photo));
+      if (photo && i) {
+        if (!photosReady()) return toast(notReadyMessage, "err");
+        pickPhoto(true, async (file) => {
+          const setP = (txt) => { uploading.set(i.id, txt); render(); };
+          try {
+            setP("Preparing…");
+            const url = await uploadPhoto(file, { user, name: photoName(i), onProgress: (p, txt) => setP(txt.replace("Uploading… ", "")) });
+            await setDoc(doc(db, "items", i.id), { imageUrl: url, updatedAt: serverTimestamp() }, { merge: true });
+            toast(`Photo added to ${label(i)}.`);
+          } catch (x) { toast(x.message || friendlyError(x), "err"); }
+          finally { uploading.delete(i.id); render(); }
+        });
+        return;
+      }
       if (edit && i) loadForEdit(i);
       if (del && i && confirm(`Delete item ${label(i)}?`)) {
         try { await deleteDoc(doc(db, "items", del)); toast(`Item ${label(i)} deleted.`); if (editingId === del) resetForm(); }
