@@ -51,6 +51,8 @@ export const phoneFmt = (p) => {
 };
 export const timeFmt = (ts) => (ts?.toDate ? ts.toDate().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "");
 export const staffName = (email) => String(email || "").split("@")[0];
+// Same donor typed slightly differently ("Smith Hardware" vs "smith  hardware ") counts as one donor.
+export const donorKey = (name) => String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
 export const naturalSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 
 export function toast(msg, kind = "ok") {
@@ -130,6 +132,7 @@ export const PAGES = [
   ["checkout.html", "checkout", "Checkout", "Take payments, receipts"],
   ["pickup.html",   "pickup",   "Pickup",   "Hand out items"],
   ["qr.html",       "qr",       "QR sign",  "Print the sign-up QR code"],
+  ["reports.html",  "reports",  "Reports",  "Donor reports"],
 ];
 const ADMIN_PAGES = [["access.html", "Staff"], ["test.html", "Test"]];
 const ALL_KEYS = PAGES.map((p) => p[1]);

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reports</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .controls .row { align-items: end; }
+    .controls select { min-height: 44px; }
+    .check-line { display: flex; gap: 8px; align-items: center; color: var(--ink); margin: 4px 0 12px; }
+    .check-line input { width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }
+    .donor-table td, .donor-table th { padding: 8px; }
+    .report-page { background: #fff; color: #111; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.12);
+      padding: 28px 28px 24px; margin: 0 0 18px; }
+    .report-page .rp-top { display: flex; justify-content: space-between; gap: 12px; font-size: .85rem; color: #555;
+      border-bottom: 2px solid #222; padding-bottom: 8px; margin-bottom: 18px; }
+    .report-page .rp-top b { color: #111; font-size: 1rem; }
+    .report-page h2 { margin: 0 0 4px; font-size: 1.5rem; }
+    .report-page .rp-contact { color: #444; margin-bottom: 18px; line-height: 1.5; }
+    .report-page table { width: 100%; border-collapse: collapse; }
+    .report-page th { text-align: left; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; color: #555;
+      border-bottom: 1px solid #999; padding: 6px 8px; }
+    .report-page td { border-bottom: 1px solid #ddd; padding: 8px; vertical-align: top; color: #111; }
+    .report-page .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .report-page tfoot td { border-bottom: none; border-top: 2px solid #222; font-weight: 700; padding-top: 10px; }
+    .report-page.no-donor h2 { color: #8a5a00; }
+    @media (max-width: 640px) { .report-page { padding: 18px 14px; } .report-page h2 { font-size: 1.25rem; } }
+    @media print {
+      @page { size: letter; margin: 0.6in; }
+      main { max-width: none; padding: 0; }
+      .report-page { box-shadow: none; border-radius: 0; padding: 0; margin: 0;
+        break-after: page; page-break-after: always; }
+      .report-page:last-child { break-after: auto; page-break-after: auto; }
+      .report-page tr { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card controls no-print">
+    <h1>Donor report</h1>
+    <div class="row">
+      <label>Donor
+        <select id="pick"></select>
+      </label>
+      <div style="flex:0 1 220px"><button class="primary big" id="print">Print / Save as PDF</button></div>
+    </div>
+    <label class="check-line" id="noDonorWrap"><input type="checkbox" id="noDonor">
+      Include a page for items with no donor listed</label>
+    <p class="muted" id="summary" style="margin:0"></p>
+  </div>
+
+  <details class="card no-print" id="donorsBox">
+    <summary><b>All donors at a glance</b></summary>
+    <div class="table-wrap" style="margin-top:10px">
+      <table class="donor-table">
+        <thead><tr><th>Donor</th><th class="num">Items</th><th class="num">Retail value</th></tr></thead>
+        <tbody id="donorRows"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <div id="report"></div>
+</main>
+
+<script type="module">
+  import { staffPage, listenItems, esc, money, donorKey, naturalSort, phoneFmt, EVENT_NAME } from "./js/firebase.js";
+
+  staffPage("Reports", () => {
+    const pick = document.getElementById("pick"), noDonor = document.getElementById("noDonor");
+    const NONE = "__none__";
+    let donors = [], unassigned = [];
+
+    function group(items) {
+      const m = new Map();
+      unassigned = [];
+      for (const i of items) {
+        const k = donorKey(i.donorName);
+        if (!k) { unassigned.push(i); continue; }
+        const d = m.get(k) || { key: k, name: i.donorName.trim(), address: "", phone: "", items: [] };
+        d.address ||= (i.donorAddress || "").trim();
+        d.phone ||= (i.donorPhone || "").trim();
+        d.items.push(i);
+        m.set(k, d);
+      }
+      donors = [...m.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      donors.forEach((d) => d.items.sort((a, b) => naturalSort(a.itemNumber, b.itemNumber)));
+      unassigned.sort((a, b) => naturalSort(a.itemNumber, b.itemNumber));
+    }
+    const total = (list) => list.reduce((s, i) => s + (Number(i.retailValue) || 0), 0);
+    const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+    function page(d, isNone = false) {
+      return `
+        <section class="report-page${isNone ? " no-donor" : ""}">
+          <div class="rp-top"><span><b>${esc(EVENT_NAME)}</b> · Donor report</span><span>${esc(today)}</span></div>
+          <h2>${isNone ? "No donor listed" : esc(d.name)}</h2>
+          <div class="rp-contact">
+            ${isNone ? "These items don't have a donor entered yet." :
+              [esc(d.address), esc(phoneFmt(d.phone))].filter(Boolean).join("<br>") || '<span style="color:#888">No address or phone on file</span>'}
+          </div>
+          <table>
+            <thead><tr><th style="width:5.5em">Item #</th><th>Description</th><th class="num">Retail value</th></tr></thead>
+            <tbody>${d.items.map((i) => `
+              <tr><td><b>${esc(i.itemNumber)}</b></td><td>${esc(i.description)}</td>
+                  <td class="num">${i.retailValue != null ? money(i.retailValue) : "—"}</td></tr>`).join("")}</tbody>
+            <tfoot><tr><td colspan="2">${d.items.length} item${d.items.length === 1 ? "" : "s"} · Total retail value</td>
+              <td class="num">${money(total(d.items))}</td></tr></tfoot>
+          </table>
+        </section>`;
+    }
+
+    function renderPicker() {
+      const prev = pick.value;
+      pick.innerHTML =
+        `<option value="">All donors — one per page (${donors.length})</option>` +
+        donors.map((d) => `<option value="${esc(d.key)}">${esc(d.name)} (${d.items.length})</option>`).join("") +
+        (unassigned.length ? `<option value="${NONE}">No donor listed (${unassigned.length})</option>` : "");
+      pick.value = [...pick.options].some((o) => o.value === prev) ? prev : "";
+    }
+
+    function renderReport() {
+      const v = pick.value;
+      document.getElementById("noDonorWrap").hidden = v !== "" || !unassigned.length;
+      let html = "";
+      if (v === NONE) html = page({ items: unassigned }, true);
+      else if (v) { const d = donors.find((x) => x.key === v); if (d) html = page(d); }
+      else {
+        html = donors.map((d) => page(d)).join("");
+        if (noDonor.checked && unassigned.length) html += page({ items: unassigned }, true);
+      }
+      const pages = (html.match(/class="report-page/g) || []).length;
+      document.getElementById("report").innerHTML = html ||
+        `<div class="card"><p class="muted" style="margin:0">No items have a donor yet. Add donor names on the Items page.</p></div>`;
+      document.getElementById("print").disabled = !pages;
+      document.getElementById("summary").textContent = pages
+        ? `${pages} page${pages === 1 ? "" : "s"} ready to print.` + (v === "" && unassigned.length && !noDonor.checked
+            ? ` ${unassigned.length} item${unassigned.length === 1 ? " has" : "s have"} no donor listed.` : "")
+        : "";
+    }
+
+    function renderDonorTable() {
+      const rows = donors.map((d) => `<tr class="click" data-key="${esc(d.key)}"><td>${esc(d.name)}</td>
+        <td class="num">${d.items.length}</td><td class="num">${money(total(d.items))}</td></tr>`);
+      if (unassigned.length) rows.push(`<tr class="click" data-key="${NONE}"><td><i>No donor listed</i></td>
+        <td class="num">${unassigned.length}</td><td class="num">${money(total(unassigned))}</td></tr>`);
+      const all = donors.flatMap((d) => d.items);
+      rows.push(`<tr><td><b>All donors</b></td><td class="num"><b>${all.length}</b></td><td class="num"><b>${money(total(all))}</b></td></tr>`);
+      document.getElementById("donorRows").innerHTML = rows.join("");
+    }
+    document.getElementById("donorRows").onclick = (e) => {
+      const tr = e.target.closest("tr[data-key]");
+      if (!tr) return;
+      pick.value = tr.dataset.key; renderReport();
+      document.getElementById("report").scrollIntoView({ behavior: "smooth" });
+    };
+
+    pick.onchange = renderReport;
+    noDonor.onchange = renderReport;
+    document.getElementById("print").onclick = () => window.print();
+
+    listenItems((items) => { group(items); renderPicker(); renderDonorTable(); renderReport(); });
+  });
+</script>
+</body>
+</html>

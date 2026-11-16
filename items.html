@@ -12,6 +12,9 @@
     td.photo { width: 84px; }
     td.photo a, #imgPreview a { text-decoration: none; }
     .img-row { display: flex; gap: 12px; align-items: end; }
+    fieldset.donor { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px 4px; margin: 0 0 10px; }
+    fieldset.donor legend { font-size: .9rem; color: var(--muted); padding: 0 4px; }
+    .donor-line { font-size: .85rem; color: var(--muted); margin-top: 2px; }
     .img-row label { flex: 1; }
     #imgPreview { width: 72px; height: 72px; margin-bottom: 10px; flex: 0 0 72px; }
     @media (max-width: 640px) {
@@ -42,6 +45,23 @@
       </label>
       <div id="imgPreview"></div>
     </div>
+    <fieldset class="donor">
+      <legend>Donor (optional)</legend>
+      <div class="row">
+        <label>Donor name
+          <input name="donorName" id="donorName" list="donorList" maxlength="100" autocomplete="off"
+                 placeholder="Person or business">
+        </label>
+        <label style="flex:0 1 180px">Donor phone
+          <input name="donorPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="off">
+        </label>
+      </div>
+      <label>Donor address
+        <input name="donorAddress" maxlength="160" autocomplete="off" placeholder="Street, City, State ZIP">
+      </label>
+      <datalist id="donorList"></datalist>
+      <p class="muted" id="donorHint" style="margin:-4px 0 0;font-size:.85rem"></p>
+    </fieldset>
     <p id="existing" class="muted"></p>
     <div class="row">
       <button class="primary big" type="submit" id="save">Save item</button>
@@ -51,9 +71,10 @@
 
   <details class="card">
     <summary><b>Paste a list from a spreadsheet</b></summary>
-    <p class="muted">Copy columns from Excel or Google Sheets — <b>Item #, Description, Retail value</b>, and optionally
-      a 4th column <b>Image URL</b> — and paste below. A header row is skipped automatically. Items that already exist
-      get updated (a blank image column leaves the current image alone); winners and payments are never touched.</p>
+    <p class="muted">Copy columns from Excel or Google Sheets in this order and paste below:
+      <b>Item #, Description, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone</b>.
+      A header row is skipped automatically. Items that already exist get updated (blank optional columns leave what's
+      already saved alone); winners and payments are never touched.</p>
     <textarea id="paste" rows="8" placeholder="1	Wine &amp; cheese basket	120&#10;2	Weekend cabin stay	600"></textarea>
     <p id="preview" class="muted"></p>
     <button class="primary" id="import" disabled>Import</button>
@@ -73,7 +94,7 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, setDoc, deleteDoc, writeBatch, serverTimestamp,
-           esc, money, fullName, toast, friendlyError } from "./js/firebase.js";
+           esc, money, fullName, toast, friendlyError, donorKey } from "./js/firebase.js";
 
   staffPage("Items", (user) => {
     let bidders = new Map(), items = [];
@@ -113,6 +134,31 @@
     };
     imgIn.oninput = showPreview;
 
+    // ---- donor: suggest names already used, and fill in their address/phone ----
+    const donorIn = document.getElementById("donorName");
+    function fillDonor(i) {
+      f.donorName.value = i.donorName || ""; f.donorAddress.value = i.donorAddress || ""; f.donorPhone.value = i.donorPhone || "";
+      document.getElementById("donorHint").textContent = "";
+    }
+    function knownDonors() {
+      const m = new Map();
+      for (const i of items) {
+        const k = donorKey(i.donorName); if (!k) continue;
+        const d = m.get(k) || { name: i.donorName.trim(), address: "", phone: "" };
+        d.address ||= i.donorAddress || ""; d.phone ||= i.donorPhone || "";
+        m.set(k, d);
+      }
+      return m;
+    }
+    donorIn.oninput = () => {
+      const d = knownDonors().get(donorKey(donorIn.value));
+      const hint = document.getElementById("donorHint");
+      if (d && (d.address || d.phone) && !f.donorAddress.value && !f.donorPhone.value) {
+        f.donorAddress.value = d.address; f.donorPhone.value = d.phone;
+        hint.textContent = "Filled in from this donor's other items.";
+      } else hint.textContent = "";
+    };
+
     function showExisting() {
       const i = findItem(itemIn.value);
       document.getElementById("formTitle").textContent = i ? `Edit item ${i.itemNumber}` : "Add an item";
@@ -122,20 +168,22 @@
     }
     itemIn.oninput = () => {
       const i = findItem(itemIn.value);
-      if (i) { f.description.value = i.description || ""; f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); }
+      if (i) { f.description.value = i.description || ""; f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); fillDonor(i); }
       showExisting();
     };
 
     function render() {
+      document.getElementById("donorList").innerHTML =
+        [...knownDonors().values()].map((d) => `<option value="${esc(d.name)}">`).join("");
       const term = document.getElementById("q").value.trim().toLowerCase();
-      const shown = items.filter((i) => !term || `${i.itemNumber} ${i.description || ""}`.toLowerCase().includes(term));
+      const shown = items.filter((i) => !term || `${i.itemNumber} ${i.description || ""} ${i.donorName || ""}`.toLowerCase().includes(term));
       const retail = items.reduce((s, i) => s + (Number(i.retailValue) || 0), 0);
       document.getElementById("count").textContent =
         `${shown.length} of ${items.length} items · total retail value ${money(retail)}`;
       document.getElementById("rows").innerHTML = shown.map((i) => `
         <tr>
           <td><b>${esc(i.itemNumber)}</b></td>
-          <td>${esc(i.description)}</td>
+          <td>${esc(i.description)}${i.donorName ? `<div class="donor-line">Donor: ${esc(i.donorName)}</div>` : ""}</td>
           <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
           <td>${i.bidNumber != null ? `#${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))}` : '<span class="muted">—</span>'}</td>
           <td class="num">${i.bidNumber != null ? money(i.amount) : ""}</td>
@@ -151,7 +199,7 @@
       if (edit) {
         const i = items.find((x) => x.id === edit);
         f.itemNumber.value = i.itemNumber; f.description.value = i.description || "";
-        f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); showExisting();
+        f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); fillDonor(i); showExisting();
         window.scrollTo({ top: 0, behavior: "smooth" }); f.description.focus();
       }
       if (del && confirm(`Delete item ${del}?`)) {
@@ -168,15 +216,17 @@
       if (imageUrl === null) return toast("The image URL isn't a valid link — it should start with https://", "err");
       const existing = findItem(itemNumber);
       const data = { itemNumber, description: f.description.value.trim(),
-                     retailValue: parseMoney(f.retailValue.value), imageUrl, updatedAt: serverTimestamp() };
+                     retailValue: parseMoney(f.retailValue.value), imageUrl,
+                     donorName: f.donorName.value.trim(), donorAddress: f.donorAddress.value.trim(),
+                     donorPhone: f.donorPhone.value.trim(), updatedAt: serverTimestamp() };
       if (!existing) Object.assign(data, { bidNumber: null, amount: null, paid: false, pickedUp: false, createdBy: user.email });
       try {
         await setDoc(doc(db, "items", existing?.id || itemNumber), data, { merge: true });
         toast(`Item ${itemNumber} saved.`);
-        f.reset(); showPreview(); showExisting(); itemIn.focus();
+        f.reset(); showPreview(); showExisting(); document.getElementById("donorHint").textContent = ""; itemIn.focus();
       } catch (err) { toast(friendlyError(err), "err"); }
     };
-    document.getElementById("clear").onclick = () => { f.reset(); showPreview(); showExisting(); itemIn.focus(); };
+    document.getElementById("clear").onclick = () => { f.reset(); showPreview(); showExisting(); document.getElementById("donorHint").textContent = ""; itemIn.focus(); };
 
     // ---- paste import ----
     const paste = document.getElementById("paste"), importBtn = document.getElementById("import");
@@ -195,12 +245,15 @@
       parsed = []; const bad = [], badImg = [];
       paste.value.split(/\r?\n/).forEach((line, idx) => {
         if (!line.trim()) return;
-        const [n, d, r, img] = splitLine(line).map((c) => (c ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
+        const [n, d, r, img, dn, da, dp] = splitLine(line).map((c) => (c ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
         if (idx === 0 && /item|#|number/i.test(n) && isNaN(parseMoney(r) ?? NaN)) return; // header row
         if (!validNum(n)) return bad.push(idx + 1);
         const row = { itemNumber: n, description: (d || "").slice(0, 120), retailValue: parseMoney(r) };
         const url = cleanUrl(img);
         if (url) row.imageUrl = url; else if (img) badImg.push(idx + 1);
+        if (dn) row.donorName = dn.slice(0, 100);
+        if (da) row.donorAddress = da.slice(0, 160);
+        if (dp) row.donorPhone = dp.slice(0, 20);
         parsed.push(row);
       });
       const dupes = parsed.filter((p) => findItem(p.itemNumber)).length;
