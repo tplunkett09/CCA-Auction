@@ -47,7 +47,7 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, setDoc, serverTimestamp,
-           esc, money, fullName, toast, friendlyError } from "./js/firebase.js";
+           esc, money, fullName, toast, friendlyError , newItemId } from "./js/firebase.js";
 
   staffPage("Winners", (user) => {
     let bidders = new Map(), items = [];
@@ -127,7 +127,7 @@
       if (existing?.paid && existing.bidNumber !== bidNumber)
         return toast(`Item ${itemNumber} is already PAID by #${existing.bidNumber}. Undo the payment at Checkout first.`, "err");
 
-      const id = existing?.id || itemNumber;
+      const id = existing?.id || newItemId();
       const data = { itemNumber, description: f.description.value.trim() || existing?.description || "",
                      bidNumber, amount, updatedAt: serverTimestamp(), enteredBy: user.email };
       if (!existing || existing.bidNumber == null) Object.assign(data, { paid: false, pickedUp: false });

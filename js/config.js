@@ -18,5 +18,12 @@ export const EVENT_NAME = "CCA Auction";
 // Text at the bottom of every PDF receipt (e.g. your nonprofit name and EIN).
 export const RECEIPT_FOOTER = "Thank you for supporting CCA! Please keep this receipt for your records.";
 
+// Item categories, in the order item numbers are assigned (Food first, then Gift Cards, ...).
+export const CATEGORIES = ["Food", "Gift Cards", "Kitchen", "Home Decor", "Apparel", "Kids",
+  "Accessories", "Hunting/Outdoor", "Automotive", "Farm"];
+
+// Item numbers start here when you press "Assign item numbers".
+export const FIRST_ITEM_NUMBER = 125;
+
 // The first bid number handed out. Numbers count up from here.
 export const FIRST_BID_NUMBER = 1;

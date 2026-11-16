@@ -12,11 +12,17 @@
     td.photo { width: 84px; }
     td.photo a, #imgPreview a { text-decoration: none; }
     .img-row { display: flex; gap: 12px; align-items: end; }
-    fieldset.donor { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px 4px; margin: 0 0 10px; }
-    fieldset.donor legend { font-size: .9rem; color: var(--muted); padding: 0 4px; }
-    .donor-line { font-size: .85rem; color: var(--muted); margin-top: 2px; }
     .img-row label { flex: 1; }
     #imgPreview { width: 72px; height: 72px; margin-bottom: 10px; flex: 0 0 72px; }
+    select { min-height: 44px; }
+    fieldset.donor { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px 4px; margin: 0 0 10px; }
+    fieldset.donor legend { font-size: .9rem; color: var(--muted); padding: 0 4px; }
+    .sub-line { font-size: .85rem; color: var(--muted); margin-top: 3px; }
+    .cat { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: 4px; }
+    .numbering { border-left: 4px solid var(--accent); }
+    .numbering table td { padding: 4px 8px; border: none; }
+    .numbering .plan { margin: 8px 0 12px; }
     @media (max-width: 640px) {
       #rows tr { position: relative; padding-right: 88px; min-height: 88px; }
       #rows td.photo { position: absolute; top: 8px; right: 0; width: auto; padding: 0; }
@@ -28,13 +34,15 @@
   <form class="card" id="f">
     <h1 id="formTitle">Add an item</h1>
     <div class="row">
-      <label style="flex:0 1 140px">Item #
-        <input name="itemNumber" id="itemNumber" required autocomplete="off" maxlength="20">
-      </label>
       <label>Description
-        <input name="description" required maxlength="120" autocomplete="off">
+        <input name="description" id="description" required maxlength="120" autocomplete="off">
       </label>
-      <label style="flex:0 1 160px">Retail value ($)
+    </div>
+    <div class="row">
+      <label style="flex:2 1 220px">Category
+        <select name="category" id="category"></select>
+      </label>
+      <label style="flex:0 1 170px">Retail value ($)
         <input name="retailValue" type="number" inputmode="decimal" step="0.01" min="0">
       </label>
     </div>
@@ -47,20 +55,18 @@
     </div>
     <fieldset class="donor">
       <legend>Donor (optional)</legend>
-      <div class="row">
-        <label>Donor name
-          <input name="donorName" id="donorName" list="donorList" maxlength="100" autocomplete="off"
-                 placeholder="Person or business">
-        </label>
-        <label style="flex:0 1 180px">Donor phone
-          <input name="donorPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="off">
-        </label>
-      </div>
+      <label>Donor name
+        <input name="donorName" id="donorName" list="donorList" maxlength="100" autocomplete="off"
+               placeholder="Person or business">
+      </label>
       <label>Donor address
         <input name="donorAddress" maxlength="160" autocomplete="off" placeholder="Street, City, State ZIP">
       </label>
+      <label>Donor phone
+        <input name="donorPhone" type="tel" inputmode="tel" maxlength="20" autocomplete="off">
+      </label>
       <datalist id="donorList"></datalist>
-      <p class="muted" id="donorHint" style="margin:-4px 0 0;font-size:.85rem"></p>
+      <p class="muted" id="donorHint" style="margin:-4px 0 6px;font-size:.85rem"></p>
     </fieldset>
     <p id="existing" class="muted"></p>
     <div class="row">
@@ -69,19 +75,20 @@
     </div>
   </form>
 
+  <div class="card numbering" id="numbering" hidden></div>
+
   <details class="card">
     <summary><b>Paste a list from a spreadsheet</b></summary>
     <p class="muted">Copy columns from Excel or Google Sheets in this order and paste below:
-      <b>Item #, Description, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone</b>.
-      A header row is skipped automatically. Items that already exist get updated (blank optional columns leave what's
-      already saved alone); winners and payments are never touched.</p>
-    <textarea id="paste" rows="8" placeholder="1	Wine &amp; cheese basket	120&#10;2	Weekend cabin stay	600"></textarea>
+      <b>Description, Category, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone</b>.
+      A header row is skipped automatically. Each line is added as a new item.</p>
+    <textarea id="paste" rows="8" placeholder="Wine &amp; cheese basket	Food	120&#10;$50 Kroger card	Gift Cards	50"></textarea>
     <p id="preview" class="muted"></p>
     <button class="primary" id="import" disabled>Import</button>
   </details>
 
   <div class="row">
-    <label>Search items <input id="q" type="search" placeholder="item # or description"></label>
+    <label>Search items <input id="q" type="search" placeholder="item #, description, category or donor"></label>
   </div>
   <p class="muted" id="count"></p>
   <div class="card table-wrap">
@@ -93,25 +100,149 @@
 </main>
 
 <script type="module">
-  import { staffPage, listenBidders, listenItems, db, doc, setDoc, deleteDoc, writeBatch, serverTimestamp,
-           esc, money, fullName, toast, friendlyError, donorKey } from "./js/firebase.js";
+  import { staffPage, listenBidders, listenItems, db, doc, getDoc, setDoc, deleteDoc, runTransaction, serverTimestamp,
+           esc, money, fullName, toast, friendlyError, donorKey, naturalSort, hasItemNumber, newItemId,
+           CATEGORIES, FIRST_ITEM_NUMBER } from "./js/firebase.js";
 
   staffPage("Items", (user) => {
-    let bidders = new Map(), items = [];
-    const f = document.getElementById("f"), itemIn = document.getElementById("itemNumber");
-    const findItem = (n) => items.find((i) => String(i.itemNumber).toLowerCase() === String(n).trim().toLowerCase());
+    let bidders = new Map(), items = [], editingId = null, numberingStarted = false, counterNext = null, lastNumbered = -1;
+    const f = document.getElementById("f");
+    const counterRef = doc(db, "counters", "items");
+
+    document.getElementById("category").innerHTML = `<option value="">Choose a category…</option>` +
+      CATEGORIES.map((c) => `<option>${esc(c)}</option>`).join("");
+
     const parseMoney = (s) => {
       const v = String(s ?? "").replace(/[$,\s]/g, "");
       return v === "" || isNaN(Number(v)) ? null : Math.round(Number(v) * 100) / 100;
     };
-    const validNum = (n) => n && !n.includes("/") && n.length <= 20;
     const cleanUrl = (s) => {
       const v = String(s ?? "").trim();
       if (!v) return "";
       try { const u = new URL(v); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; }
     };
-    // Small version of the image. ImageKit can resize on the fly, so ask it for a 160px thumbnail
-    // instead of downloading the full photo. Other image hosts just get scaled down in the browser.
+    const matchCategory = (s) => CATEGORIES.find((c) => c.toLowerCase() === String(s || "").trim().toLowerCase()) || "";
+    const label = (i) => hasItemNumber(i) ? `#${i.itemNumber}` : `"${i.description || "item"}"`;
+
+    // ---------- numbering order: category order, then the order items were entered ----------
+    const catIndex = (c) => { const k = CATEGORIES.indexOf(c); return k < 0 ? CATEGORIES.length : k; };
+    const createdMs = (i) => (i.createdAt?.toDate ? i.createdAt.toDate().getTime() : 0);
+    const byNumberingOrder = (a, b) => catIndex(a.category) - catIndex(b.category) || createdMs(a) - createdMs(b);
+    const highestNumber = () => Math.max(0, ...items.filter(hasItemNumber)
+      .map((i) => parseInt(i.itemNumber, 10)).filter(Number.isFinite));
+    const nextFrom = (counterNext) => Math.max(counterNext || FIRST_ITEM_NUMBER, highestNumber() + 1, FIRST_ITEM_NUMBER);
+
+    async function refreshCounter() {
+      try { const c = await getDoc(counterRef); numberingStarted = c.exists(); counterNext = c.exists() ? c.data().next : null; }
+      catch { /* keep last known */ }
+      renderNumbering();
+    }
+
+    // Gives numbers to `list` (in numbering order) inside transactions so two people can't get the same number.
+    async function assignNumbers(list, { restart = false } = {}) {
+      const ordered = [...list].sort(byNumberingOrder);
+      let first = null, last = null;
+      for (let s = 0; s < ordered.length; s += 400) {
+        const chunk = ordered.slice(s, s + 400);
+        await runTransaction(db, async (tx) => {
+          const c = await tx.get(counterRef);
+          let n = restart && s === 0 ? FIRST_ITEM_NUMBER : nextFrom(c.exists() ? c.data().next : null);
+          if (restart && s > 0) n = c.data().next;
+          if (first == null) first = n;
+          for (const i of chunk) tx.update(doc(db, "items", i.id), { itemNumber: String(n++), updatedAt: serverTimestamp() });
+          last = n - 1;
+          tx.set(counterRef, { next: n });
+        });
+      }
+      numberingStarted = true;
+      return [first, last];
+    }
+
+    // Adds new items. Once numbering has been run, each new item also gets the next number right away.
+    async function createItems(rows) {
+      const made = [];
+      for (let s = 0; s < rows.length; s += 400) {
+        const chunk = rows.slice(s, s + 400).sort(byNumberingOrder);
+        const nums = await runTransaction(db, async (tx) => {
+          const c = await tx.get(counterRef);
+          let n = c.exists() ? nextFrom(c.data().next) : null;
+          const got = [];
+          for (const r of chunk) {
+            const data = { ...r, bidNumber: null, amount: null, paid: false, pickedUp: false,
+                           itemNumber: n == null ? null : String(n++), createdAt: serverTimestamp(),
+                           createdBy: user.email, updatedAt: serverTimestamp() };
+            tx.set(doc(db, "items", newItemId()), data);
+            got.push(data.itemNumber);
+          }
+          if (n != null) tx.set(counterRef, { next: n });
+          return got;
+        });
+        made.push(...nums);
+      }
+      if (made.some((x) => x != null)) numberingStarted = true;
+      return made;
+    }
+
+    function renderNumbering() {
+      const box = document.getElementById("numbering");
+      const unnumbered = items.filter((i) => !hasItemNumber(i));
+      const anyWinners = items.some((i) => i.bidNumber != null);
+      if (!items.length) { box.hidden = true; return; }
+      box.hidden = false;
+
+      // Preview: which numbers each category will get
+      let n = nextFrom(counterNext), plan = "";
+      if (unnumbered.length) {
+        const groups = new Map();
+        [...unnumbered].sort(byNumberingOrder).forEach((i) => {
+          const k = i.category || "No category";
+          groups.set(k, (groups.get(k) || 0) + 1);
+        });
+        plan = [...groups].map(([cat, count]) => {
+          const row = `<tr><td>${esc(cat)}</td><td class="num">${count} item${count === 1 ? "" : "s"}</td>
+            <td><b>${n}${count > 1 ? `–${n + count - 1}` : ""}</b></td></tr>`;
+          n += count; return row;
+        }).join("");
+      }
+      const noCat = unnumbered.filter((i) => !i.category).length;
+      box.innerHTML = `
+        <h2 style="margin-top:0">Item numbers</h2>
+        ${unnumbered.length ? `
+          <p style="margin:0">${unnumbered.length} item${unnumbered.length === 1 ? " doesn't" : "s don't"} have a number yet.
+            ${numberingStarted ? "" : "Add all your items first, then assign numbers."}</p>
+          <table class="plan">${plan}</table>
+          ${noCat ? `<p class="pill warn" style="margin:0 0 10px">${noCat} item${noCat === 1 ? " has" : "s have"} no category — numbered last</p>` : ""}
+          <button class="primary big" id="assign">Assign item numbers</button>`
+        : `<p style="margin:0">All ${items.length} items are numbered.
+             ${numberingStarted ? "New items get the next number automatically when saved." : ""}</p>`}
+        ${!anyWinners && items.some(hasItemNumber) ? `
+          <details style="margin-top:12px"><summary class="muted">Renumber everything from ${FIRST_ITEM_NUMBER}</summary>
+            <p class="muted">Gives every item a new number, grouped by category, starting at ${FIRST_ITEM_NUMBER}.
+              Use this if you added more items after numbering. Only possible before any winners are entered.
+              Any labels you've already printed would need reprinting.</p>
+            <button class="danger" id="renumber">Renumber all ${items.length} items</button>
+          </details>` : ""}`;
+
+      document.getElementById("assign")?.addEventListener("click", async (e) => {
+        if (!confirm(`Assign numbers to ${unnumbered.length} item(s) as shown?`)) return;
+        e.target.disabled = true;
+        try {
+          const [a, b] = await assignNumbers(unnumbered);
+          toast(`Numbered ${unnumbered.length} item(s): ${a}${b > a ? "–" + b : ""}.`);
+        } catch (x) { toast(friendlyError(x), "err"); e.target.disabled = false; }
+      });
+      document.getElementById("renumber")?.addEventListener("click", async (e) => {
+        const typed = prompt(`This changes the number of ALL ${items.length} items, starting at ${FIRST_ITEM_NUMBER}, grouped by category.\n\nType RENUMBER to confirm.`);
+        if (typed !== "RENUMBER") return toast("Nothing was changed.");
+        e.target.disabled = true;
+        try {
+          const [a, b] = await assignNumbers(items, { restart: true });
+          toast(`All items renumbered ${a}–${b}.`);
+        } catch (x) { toast(friendlyError(x), "err"); e.target.disabled = false; }
+      });
+    }
+
+    // ---------- photo thumbnails ----------
     const thumbUrl = (url) => {
       try {
         const u = new URL(url);
@@ -121,9 +252,9 @@
         return u.href;
       } catch { return url; }
     };
-    const thumbHtml = (url, label = "") => url
+    const thumbHtml = (url, alt = "") => url
       ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="Open full image">
-           <img class="thumb" src="${esc(thumbUrl(url))}" alt="${esc(label)}" loading="lazy"
+           <img class="thumb" src="${esc(thumbUrl(url))}" alt="${esc(alt)}" loading="lazy"
                 onerror="this.outerHTML='<div class=&quot;thumb none&quot;>Image not found</div>'"></a>`
       : "";
     const imgIn = document.getElementById("imageUrl");
@@ -134,12 +265,8 @@
     };
     imgIn.oninput = showPreview;
 
-    // ---- donor: suggest names already used, and fill in their address/phone ----
-    const donorIn = document.getElementById("donorName");
-    function fillDonor(i) {
-      f.donorName.value = i.donorName || ""; f.donorAddress.value = i.donorAddress || ""; f.donorPhone.value = i.donorPhone || "";
-      document.getElementById("donorHint").textContent = "";
-    }
+    // ---------- donor: suggest names already used, and fill in their address/phone ----------
+    const donorIn = document.getElementById("donorName"), donorHint = document.getElementById("donorHint");
     function knownDonors() {
       const m = new Map();
       for (const i of items) {
@@ -150,40 +277,73 @@
       }
       return m;
     }
-    donorIn.oninput = () => {
+    donorIn.addEventListener("input", () => {
       const d = knownDonors().get(donorKey(donorIn.value));
-      const hint = document.getElementById("donorHint");
       if (d && (d.address || d.phone) && !f.donorAddress.value && !f.donorPhone.value) {
         f.donorAddress.value = d.address; f.donorPhone.value = d.phone;
-        hint.textContent = "Filled in from this donor's other items.";
-      } else hint.textContent = "";
-    };
+        donorHint.textContent = "Filled in from this donor's other items.";
+      }
+    });
 
-    function showExisting() {
-      const i = findItem(itemIn.value);
-      document.getElementById("formTitle").textContent = i ? `Edit item ${i.itemNumber}` : "Add an item";
-      document.getElementById("existing").innerHTML = i?.bidNumber != null
-        ? `Won by #${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))} for ${money(i.amount)} — editing keeps the winner.`
-        : i ? "This item exists — saving will update it." : "";
+    // ---------- form ----------
+    function resetForm() {
+      editingId = null; f.reset(); showPreview(); donorHint.textContent = "";
+      document.getElementById("formTitle").textContent = "Add an item";
+      document.getElementById("existing").textContent = "";
+      document.getElementById("save").textContent = "Save item";
     }
-    itemIn.oninput = () => {
-      const i = findItem(itemIn.value);
-      if (i) { f.description.value = i.description || ""; f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); fillDonor(i); }
-      showExisting();
+    function loadForEdit(i) {
+      editingId = i.id;
+      f.description.value = i.description || ""; f.category.value = CATEGORIES.includes(i.category) ? i.category : "";
+      f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview();
+      f.donorName.value = i.donorName || ""; f.donorAddress.value = i.donorAddress || ""; f.donorPhone.value = i.donorPhone || "";
+      donorHint.textContent = "";
+      document.getElementById("formTitle").textContent = hasItemNumber(i) ? `Edit item #${i.itemNumber}` : "Edit item (not numbered yet)";
+      document.getElementById("existing").textContent = i.bidNumber != null
+        ? `Won by #${i.bidNumber} ${fullName(bidders.get(i.bidNumber))} for ${money(i.amount)} — editing keeps the winner.` : "";
+      document.getElementById("save").textContent = "Save changes";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    document.getElementById("clear").onclick = () => { resetForm(); f.description.focus(); };
+
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const imageUrl = cleanUrl(imgIn.value);
+      if (imageUrl === null) return toast("The image URL isn't a valid link — it should start with https://", "err");
+      const data = { description: f.description.value.trim(), category: f.category.value,
+                     retailValue: parseMoney(f.retailValue.value), imageUrl,
+                     donorName: f.donorName.value.trim(), donorAddress: f.donorAddress.value.trim(),
+                     donorPhone: f.donorPhone.value.trim() };
+      const btn = document.getElementById("save"); btn.disabled = true;
+      try {
+        if (editingId) {
+          await setDoc(doc(db, "items", editingId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+          toast("Item saved.");
+        } else {
+          const [num] = await createItems([data]);
+          toast(num ? `Item saved as #${num}.` : "Item saved. It will get a number when you assign item numbers.");
+        }
+        resetForm(); f.description.focus();
+      } catch (x) { toast(friendlyError(x), "err"); }
+      finally { btn.disabled = false; }
     };
 
+    // ---------- list ----------
     function render() {
       document.getElementById("donorList").innerHTML =
         [...knownDonors().values()].map((d) => `<option value="${esc(d.name)}">`).join("");
+      const sorted = [...items].sort((a, b) => naturalSort(a.itemNumber, b.itemNumber) || byNumberingOrder(a, b));
       const term = document.getElementById("q").value.trim().toLowerCase();
-      const shown = items.filter((i) => !term || `${i.itemNumber} ${i.description || ""} ${i.donorName || ""}`.toLowerCase().includes(term));
+      const shown = sorted.filter((i) => !term ||
+        `${i.itemNumber ?? ""} ${i.description || ""} ${i.category || ""} ${i.donorName || ""}`.toLowerCase().includes(term));
       const retail = items.reduce((s, i) => s + (Number(i.retailValue) || 0), 0);
       document.getElementById("count").textContent =
         `${shown.length} of ${items.length} items · total retail value ${money(retail)}`;
       document.getElementById("rows").innerHTML = shown.map((i) => `
         <tr>
-          <td><b>${esc(i.itemNumber)}</b></td>
-          <td>${esc(i.description)}${i.donorName ? `<div class="donor-line">Donor: ${esc(i.donorName)}</div>` : ""}</td>
+          <td>${hasItemNumber(i) ? `<b>${esc(i.itemNumber)}</b>` : `<span class="pill warn">No # yet</span>`}</td>
+          <td>${esc(i.description)}
+            <div class="sub-line">${i.category ? `<span class="cat">${esc(i.category)}</span>` : ""}${i.donorName ? `Donor: ${esc(i.donorName)}` : ""}</div></td>
           <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
           <td>${i.bidNumber != null ? `#${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))}` : '<span class="muted">—</span>'}</td>
           <td class="num">${i.bidNumber != null ? money(i.amount) : ""}</td>
@@ -191,44 +351,21 @@
           <td><button data-edit="${esc(i.id)}">Edit</button>
             ${i.bidNumber == null ? `<button class="danger" data-del="${esc(i.id)}">Delete</button>` : ""}</td>
         </tr>`).join("") || `<tr><td colspan="7" class="muted">No items yet — add one above or paste a list.</td></tr>`;
+      renderNumbering();
     }
     document.getElementById("q").oninput = render;
 
     document.getElementById("rows").onclick = async (e) => {
       const { edit, del } = e.target.dataset;
-      if (edit) {
-        const i = items.find((x) => x.id === edit);
-        f.itemNumber.value = i.itemNumber; f.description.value = i.description || "";
-        f.retailValue.value = i.retailValue ?? ""; imgIn.value = i.imageUrl || ""; showPreview(); fillDonor(i); showExisting();
-        window.scrollTo({ top: 0, behavior: "smooth" }); f.description.focus();
-      }
-      if (del && confirm(`Delete item ${del}?`)) {
-        try { await deleteDoc(doc(db, "items", del)); toast(`Item ${del} deleted.`); }
+      const i = items.find((x) => x.id === (edit || del));
+      if (edit && i) loadForEdit(i);
+      if (del && i && confirm(`Delete item ${label(i)}?`)) {
+        try { await deleteDoc(doc(db, "items", del)); toast(`Item ${label(i)} deleted.`); if (editingId === del) resetForm(); }
         catch (err) { toast(friendlyError(err), "err"); }
       }
     };
 
-    f.onsubmit = async (e) => {
-      e.preventDefault();
-      const itemNumber = f.itemNumber.value.trim();
-      if (!validNum(itemNumber)) return toast("Item # can't be blank or contain “/”.", "err");
-      const imageUrl = cleanUrl(imgIn.value);
-      if (imageUrl === null) return toast("The image URL isn't a valid link — it should start with https://", "err");
-      const existing = findItem(itemNumber);
-      const data = { itemNumber, description: f.description.value.trim(),
-                     retailValue: parseMoney(f.retailValue.value), imageUrl,
-                     donorName: f.donorName.value.trim(), donorAddress: f.donorAddress.value.trim(),
-                     donorPhone: f.donorPhone.value.trim(), updatedAt: serverTimestamp() };
-      if (!existing) Object.assign(data, { bidNumber: null, amount: null, paid: false, pickedUp: false, createdBy: user.email });
-      try {
-        await setDoc(doc(db, "items", existing?.id || itemNumber), data, { merge: true });
-        toast(`Item ${itemNumber} saved.`);
-        f.reset(); showPreview(); showExisting(); document.getElementById("donorHint").textContent = ""; itemIn.focus();
-      } catch (err) { toast(friendlyError(err), "err"); }
-    };
-    document.getElementById("clear").onclick = () => { f.reset(); showPreview(); showExisting(); document.getElementById("donorHint").textContent = ""; itemIn.focus(); };
-
-    // ---- paste import ----
+    // ---------- paste import ----------
     const paste = document.getElementById("paste"), importBtn = document.getElementById("import");
     let parsed = [];
     function splitLine(line) {
@@ -242,48 +379,42 @@
       out.push(cur); return out;
     }
     paste.oninput = () => {
-      parsed = []; const bad = [], badImg = [];
+      parsed = []; const badImg = [], badCat = [];
       paste.value.split(/\r?\n/).forEach((line, idx) => {
         if (!line.trim()) return;
-        const [n, d, r, img, dn, da, dp] = splitLine(line).map((c) => (c ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
-        if (idx === 0 && /item|#|number/i.test(n) && isNaN(parseMoney(r) ?? NaN)) return; // header row
-        if (!validNum(n)) return bad.push(idx + 1);
-        const row = { itemNumber: n, description: (d || "").slice(0, 120), retailValue: parseMoney(r) };
+        const [d, c, r, img, dn, da, dp] = splitLine(line).map((x) => (x ?? "").trim().replace(/^"(.*)"$/, "$1").trim());
+        if (idx === 0 && /description|item/i.test(d) && parseMoney(r) == null) return; // header row
+        if (!d) return;
+        const row = { description: d.slice(0, 120), category: matchCategory(c), retailValue: parseMoney(r),
+                      imageUrl: "", donorName: (dn || "").slice(0, 100), donorAddress: (da || "").slice(0, 160),
+                      donorPhone: (dp || "").slice(0, 20) };
+        if (c && !row.category) badCat.push(idx + 1);
         const url = cleanUrl(img);
         if (url) row.imageUrl = url; else if (img) badImg.push(idx + 1);
-        if (dn) row.donorName = dn.slice(0, 100);
-        if (da) row.donorAddress = da.slice(0, 160);
-        if (dp) row.donorPhone = dp.slice(0, 20);
         parsed.push(row);
       });
-      const dupes = parsed.filter((p) => findItem(p.itemNumber)).length;
       document.getElementById("preview").innerHTML = parsed.length
-        ? `Ready: <b>${parsed.length}</b> items (${parsed.length - dupes} new, ${dupes} updates)` +
-          (bad.length ? ` · skipped line(s) ${bad.join(", ")}` : "") +
+        ? `Ready: <b>${parsed.length}</b> new item${parsed.length === 1 ? "" : "s"}` +
+          (badCat.length ? ` · unknown category on line(s) ${badCat.join(", ")} (left blank)` : "") +
           (badImg.length ? ` · ignored invalid image link on line(s) ${badImg.join(", ")}` : "")
-        : bad.length ? `Couldn't read line(s) ${bad.join(", ")}` : "";
+        : "";
       importBtn.disabled = !parsed.length;
     };
     importBtn.onclick = async () => {
       importBtn.disabled = true;
       try {
-        for (let s = 0; s < parsed.length; s += 400) {
-          const batch = writeBatch(db);
-          parsed.slice(s, s + 400).forEach((p) => {
-            const existing = findItem(p.itemNumber);
-            const data = { ...p, updatedAt: serverTimestamp() };
-            if (!existing) Object.assign(data, { bidNumber: null, amount: null, paid: false, pickedUp: false, createdBy: user.email });
-            batch.set(doc(db, "items", existing?.id || p.itemNumber), data, { merge: true });
-          });
-          await batch.commit();
-        }
-        toast(`Imported ${parsed.length} items.`);
+        const nums = (await createItems(parsed)).filter(Boolean);
+        toast(`Imported ${parsed.length} items.` + (nums.length ? ` Numbered ${nums[0]}–${nums[nums.length - 1]}.` : ""));
         paste.value = ""; paste.oninput();
       } catch (err) { toast(friendlyError(err), "err"); importBtn.disabled = false; }
     };
 
-    listenBidders((m) => { bidders = m; render(); showExisting(); });
-    listenItems((l) => { items = l; render(); showExisting(); });
+    listenBidders((m) => { bidders = m; render(); });
+    listenItems((l) => {
+      items = l; render();
+      const numbered = items.filter(hasItemNumber).length;
+      if (numbered !== lastNumbered) { lastNumbered = numbered; refreshCounter(); }   // someone (maybe elsewhere) numbered items
+    });
   });
 </script>
 </body>

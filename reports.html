@@ -103,7 +103,7 @@
           <table>
             <thead><tr><th style="width:5.5em">Item #</th><th>Description</th><th class="num">Retail value</th></tr></thead>
             <tbody>${d.items.map((i) => `
-              <tr><td><b>${esc(i.itemNumber)}</b></td><td>${esc(i.description)}</td>
+              <tr><td><b>${esc(i.itemNumber) || "—"}</b></td><td>${esc(i.description)}</td>
                   <td class="num">${i.retailValue != null ? money(i.retailValue) : "—"}</td></tr>`).join("")}</tbody>
             <tfoot><tr><td colspan="2">${d.items.length} item${d.items.length === 1 ? "" : "s"} · Total retail value</td>
               <td class="num">${money(total(d.items))}</td></tr></tfoot>

@@ -1,5 +1,5 @@
 // Shared setup for every page: Firebase, staff login, header/nav, and small helpers.
-import { firebaseConfig, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE } from "./config.js";
+import { firebaseConfig, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER } from "./config.js";
 
 // Load either the real Firebase SDK or the in-browser demo stand-in (same function names).
 const FB = "https://www.gstatic.com/firebasejs/10.12.2/";
@@ -15,7 +15,7 @@ if (DEMO_MODE) {
   db = fs.getFirestore(app);
   auth = au.getAuth(app);
 }
-export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE };
+export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER };
 export const {
   collection, doc, onSnapshot, runTransaction, setDoc, updateDoc,
   deleteDoc, getDoc, getDocs, writeBatch, serverTimestamp
@@ -53,7 +53,15 @@ export const timeFmt = (ts) => (ts?.toDate ? ts.toDate().toLocaleTimeString([], 
 export const staffName = (email) => String(email || "").split("@")[0];
 // Same donor typed slightly differently ("Smith Hardware" vs "smith  hardware ") counts as one donor.
 export const donorKey = (name) => String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
-export const naturalSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+// Sorts item numbers 2 < 10 < 125; items without a number go last.
+export const naturalSort = (a, b) => {
+  const ea = a == null || a === "", eb = b == null || b === "";
+  if (ea || eb) return ea - eb;
+  return String(a).localeCompare(String(b), undefined, { numeric: true });
+};
+export const hasItemNumber = (i) => i?.itemNumber != null && String(i.itemNumber).trim() !== "";
+// Internal ID for a new item (item numbers are assigned separately and can change before the event).
+export const newItemId = () => "i" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 export function toast(msg, kind = "ok") {
   let box = document.getElementById("toasts");
