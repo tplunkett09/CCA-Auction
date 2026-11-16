@@ -1,5 +1,5 @@
 // Shared setup for every page: Firebase, staff login, header/nav, and small helpers.
-import { firebaseConfig, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER } from "./config.js";
+import { firebaseConfig, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER, FUND_LEVELS } from "./config.js";
 
 // Load either the real Firebase SDK or the in-browser demo stand-in (same function names).
 const FB = "https://www.gstatic.com/firebasejs/10.12.2/";
@@ -26,7 +26,7 @@ if (DEMO_MODE) {
   }
   auth = au.getAuth(app);
 }
-export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER };
+export { db, auth, resetDemo, EVENT_NAME, FIRST_BID_NUMBER, DEMO_MODE, CATEGORIES, FIRST_ITEM_NUMBER, FUND_LEVELS };
 export const {
   collection, doc, onSnapshot, runTransaction, setDoc, updateDoc,
   deleteDoc, getDoc, getDocs, writeBatch, serverTimestamp, query, limit
@@ -153,6 +153,20 @@ export function setItemsLocked(locked, email) {
     { itemsLocked: !!locked, lockedBy: locked ? email : "", lockedAt: serverTimestamp() }, { merge: true });
 }
 
+// Fund-a-Need pledges: one record per paddle raised (bid #, amount, paid or not).
+export function listenPledges(cb) {
+  return liveCollection("pledges", (snap) => {
+    const list = [];
+    snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+    const ms = (p) => (p.createdAt?.toDate ? p.createdAt.toDate().getTime() : Date.now());
+    list.sort((a, b) => ms(a) - ms(b));
+    cb(list);
+  });
+}
+// Fund-a-Need pledges shown alongside won items (Checkout, receipts).
+export const pledgeAsLine = (p) => ({ ...p, kind: "pledge", itemNumber: "—",
+  description: `Fund-a-Need donation`, retailValue: null });
+
 export function listenItems(cb) {
   return liveCollection("items", (snap) => {
     const list = [];
@@ -189,6 +203,7 @@ export const PAGES = [
   ["checkout.html", "checkout", "Checkout", "Take payments, receipts"],
   ["pickup.html",   "pickup",   "Pickup",   "Hand out items"],
   ["qr.html",       "qr",       "QR sign",  "Print the sign-up QR code"],
+  ["fund.html",     "fund",     "Fund-a-Need", "Enter paddle-raise donations"],
   ["reports.html",  "reports",  "Reports",  "Donor reports"],
 ];
 const ADMIN_PAGES = [["access.html", "Staff"], ["test.html", "Test"]];

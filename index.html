@@ -19,6 +19,7 @@
     <a class="card" data-page="winners" href="winners.html"><b>Winners</b><br><span class="muted">Enter winning bid # and amount per item</span></a>
     <a class="card" data-page="checkout" href="checkout.html"><b>Checkout</b><br><span class="muted">See what a bidder owes and mark paid</span></a>
     <a class="card" data-page="pickup" href="pickup.html"><b>Pickup</b><br><span class="muted">Hand out paid items and mark picked up</span></a>
+    <a class="card" data-page="fund" href="fund.html"><b>Fund-a-Need</b><br><span class="muted">Enter paddle-raise donations by level</span></a>
     <a class="card" data-page="reports" href="reports.html"><b>Reports</b><br><span class="muted">Donor reports — one donor per page</span></a>
     <a class="card" data-page="qr" href="qr.html"><b>QR sign</b><br><span class="muted">Print the sign-up QR code</span></a>
     <a class="card" href="signup.html?new" target="_blank"><b>Register a bidder</b><br><span class="muted">Opens the public sign-up form</span></a>
@@ -35,7 +36,7 @@
     </div>
     <details style="margin-top:8px">
       <summary class="muted">Start fresh before the event</summary>
-      <p class="muted">Deletes <b>every bidder and every winner/payment</b> and sets the next bid number back to the start.
+      <p class="muted">Deletes <b>every bidder, Fund-a-Need pledge and winner/payment</b> and sets the next bid number back to the start.
         Your item list (numbers, descriptions, retail values) is kept. This can't be undone.</p>
       <button class="danger" id="fresh">Delete test data &amp; restart numbering</button>
     </details>
@@ -51,7 +52,7 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, money, db, doc, getDoc, setDoc,
-           FIRST_BID_NUMBER, toast, friendlyError, writeBatch, DEMO_MODE, resetDemo } from "./js/firebase.js";
+           FIRST_BID_NUMBER, toast, friendlyError, writeBatch, DEMO_MODE, resetDemo, listenPledges } from "./js/firebase.js";
 
   staffPage("Home", async (user, access) => {
     // Only show shortcuts to pages this person can use.
@@ -79,7 +80,7 @@
       }
     } catch (e) { toast(friendlyError(e), "err"); }
 
-    let bidders = new Map(), items = [];
+    let bidders = new Map(), items = [], pledges = [];
     const counterRef = doc(db, "counters", "bidders");
     const maxBid = () => Math.max(0, ...bidders.keys());
     async function showCounter() {
@@ -96,11 +97,12 @@
       catch (e) { toast(friendlyError(e), "err"); }
     };
     document.getElementById("fresh").onclick = async () => {
-      const typed = prompt(`This deletes ALL ${bidders.size} bidders and clears every winner and payment.\nItems stay in your list.\n\nType DELETE to confirm.`);
+      const typed = prompt(`This deletes ALL ${bidders.size} bidders and ${pledges.length} Fund-a-Need pledges, and clears every winner and payment.\nItems stay in your list.\n\nType DELETE to confirm.`);
       if (typed !== "DELETE") return toast("Nothing was deleted.");
       try {
         const ops = [
           ...[...bidders.values()].map((b) => ["del", doc(db, "bidders", b.id)]),
+          ...pledges.map((p) => ["del", doc(db, "pledges", p.id)]),
           ...items.map((i) => i.description || i.retailValue != null
             ? ["clear", doc(db, "items", i.id)]
             : ["del", doc(db, "items", i.id)]),
@@ -123,21 +125,26 @@
     const render = () => {
       const won = items.filter((i) => i.bidNumber != null);
       const sales = won.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-      const paid = won.filter((i) => i.paid).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      const fan = pledges.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const paid = won.filter((i) => i.paid).reduce((s, i) => s + (Number(i.amount) || 0), 0)
+                 + pledges.filter((p) => p.paid).reduce((s, p) => s + (Number(p.amount) || 0), 0);
       const picked = won.filter((i) => i.pickedUp).length;
       const stat = (v, l) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`;
       document.getElementById("stats").innerHTML =
         stat(bidders.size, "Registered bidders") +
         stat(won.length, "Items won") +
-        stat(money(sales), "Total sales") +
+        stat(money(sales), "Item sales") +
+        stat(money(fan), `Fund-a-Need (${pledges.length})`) +
+        stat(money(sales + fan), "Grand total") +
         stat(money(paid), "Collected") +
-        stat(money(sales - paid), "Still owed") +
+        stat(money(sales + fan - paid), "Still owed") +
         stat(`${picked} / ${won.length}`, "Picked up");
       document.getElementById("highest").textContent = bidders.size ? `(highest registered so far: #${maxBid()})` : "";
       document.getElementById("setNext").placeholder = String(maxBid() + 1);
     };
     listenBidders((m) => { bidders = m; render(); showCounter(); });
     listenItems((l) => { items = l; render(); });
+    listenPledges((l) => { pledges = l; render(); });
   });
 </script>
 </body>

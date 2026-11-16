@@ -47,7 +47,7 @@ export function buildReceipt(bidNumber, bidder, items) {
   };
   header();
   pdf.setTextColor(0);
-  let total = 0, paid = 0, retail = 0;
+  let total = 0, paid = 0, retail = 0, above = 0, donations = 0;
   const methods = new Set();
   for (const i of items) {
     const desc = pdf.setFont("helvetica", "normal").setFontSize(11).splitTextToSize(latin(i.description || ""), 250);
@@ -62,6 +62,9 @@ export function buildReceipt(bidNumber, bidder, items) {
     total += Number(i.amount) || 0;
     if (i.paid) { paid += Number(i.amount) || 0; if (i.paidMethod) methods.add(i.paidMethod); }
     retail += Number(i.retailValue) || 0;
+    // Counted line by line: an item sold below retail doesn't cancel out a donation.
+    if (i.paid) above += Math.max(0, (Number(i.amount) || 0) - (Number(i.retailValue) || 0));
+    if (i.kind === "pledge") donations += Number(i.amount) || 0;
   }
 
   // totals
@@ -75,12 +78,13 @@ export function buildReceipt(bidNumber, bidder, items) {
   row("Total", usd(total));
   row("Paid" + (methods.size ? ` (${[...methods].join(", ")})` : ""), usd(paid));
   row("Balance due", usd(total - paid), true);
-  if (retail > 0) {
+  if (retail > 0 || donations > 0) {
     y += 6;
     pdf.setFont("helvetica", "normal").setFontSize(10).setTextColor(90);
     pdf.text(`Total retail value of items received: ${usd(retail)}`, L, y);
     y += 14;
-    pdf.text(`Amount paid above retail value: ${usd(Math.max(0, paid - retail))}`, L, y);
+    if (donations > 0) { pdf.text(`Fund-a-Need donations (no goods received): ${usd(donations)}`, L, y); y += 14; }
+    pdf.text(`Amount paid above retail value: ${usd(above)}`, L, y);
     pdf.setTextColor(0);
   }
 

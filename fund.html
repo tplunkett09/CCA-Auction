@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fund-a-Need</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 6px 0 8px; }
+    .levels button { min-height: 56px; font-size: 1.15rem; font-weight: 800; border-radius: 12px; padding: 6px 2px; }
+    @media (max-width: 520px) { .levels button { font-size: .95rem; } .levels button small { font-size: .65rem; } }
+    .levels button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .levels button small { display: block; font-size: .75rem; font-weight: 600; opacity: .8; }
+    .other { display: flex; gap: 8px; align-items: end; }
+    .other label { flex: 1; margin: 0; }
+    .now { text-align: center; margin: 0 0 6px; }
+    .now .amt { font-size: 2rem; font-weight: 800; color: var(--accent); line-height: 1.1; }
+    #entry .huge { font-size: 2.2rem; margin: 0; min-width: 0; }
+    .entry-row { display: flex; gap: 8px; align-items: stretch; margin-top: 4px; }
+    .entry-row input { flex: 1; }
+    .entry-row button { flex: 0 0 104px; font-size: 1.25rem; border-radius: 10px; }
+    #flash { min-height: 2.6em; margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; font-weight: 700; text-align: center; }
+    #flash.ok { background: var(--ok-bg); color: var(--ok); }
+    #flash.warn { background: var(--warn-bg); color: var(--warn); }
+    .recent li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0;
+      border-bottom: 1px solid var(--line); list-style: none; }
+    .recent ul { padding: 0; margin: 0; }
+    .recent button { min-height: 38px; }
+    .tot td, .tot th { padding: 8px; }
+    .tot tfoot td { font-weight: 800; border-top: 2px solid var(--ink); border-bottom: none; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1 style="margin-bottom:2px">Fund-a-Need</h1>
+    <p class="muted" style="margin:0 0 4px;font-size:.9rem">Tap the level being called, then enter each bid # as paddles go up.</p>
+    <div class="levels" id="levels"></div>
+    <details><summary class="muted">Other amount</summary>
+      <div class="other" style="margin-top:8px">
+        <label>Amount ($) <input id="otherAmt" type="number" inputmode="decimal" min="1" step="1"></label>
+        <button id="useOther" style="min-height:44px">Use</button>
+      </div>
+    </details>
+  </div>
+
+  <form class="card" id="entry" autocomplete="off">
+    <div class="now"><span class="muted">Now entering</span> <span class="amt" id="nowAmt">Pick a level</span>
+      <div class="muted" id="nowCount"></div></div>
+    <label for="bid">Bid #</label>
+    <div class="entry-row">
+      <input class="huge" id="bid" type="number" inputmode="numeric" min="1" enterkeyhint="done" disabled>
+      <button class="primary" type="submit" id="add" disabled>Add</button>
+    </div>
+    <div id="flash"></div>
+  </form>
+
+  <div class="card recent">
+    <h2 style="margin-top:0">Just entered at this level</h2>
+    <ul id="recent"></ul>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Totals</h2>
+    <div class="table-wrap">
+      <table class="tot">
+        <thead><tr><th>Level</th><th class="num">Paddles</th><th class="num">Total</th></tr></thead>
+        <tbody id="totRows"></tbody>
+        <tfoot><tr><td>All Fund-a-Need</td><td class="num" id="totCount"></td><td class="num" id="totSum"></td></tr></tfoot>
+      </table>
+    </div>
+    <p class="muted" id="paidLine" style="margin:8px 0 0"></p>
+    <button id="csv" style="margin-top:10px">Export pledges (CSV)</button>
+  </div>
+</main>
+
+<script type="module">
+  import { staffPage, listenBidders, listenPledges, db, doc, setDoc, deleteDoc, serverTimestamp, newItemId,
+           esc, money, fullName, toast, friendlyError, FUND_LEVELS } from "./js/firebase.js";
+
+  staffPage("Fund-a-Need", (user) => {
+    let bidders = new Map(), pledges = [], level = null;
+    const bidIn = document.getElementById("bid"), flash = document.getElementById("flash");
+    const levelKey = "fundLevel";
+    const fmt = (n) => "$" + Number(n).toLocaleString("en-US");
+
+    function drawLevels() {
+      document.getElementById("levels").innerHTML = FUND_LEVELS.map((a) => {
+        const n = pledges.filter((p) => p.amount === a).length;
+        return `<button type="button" data-amt="${a}" class="${a === level ? "on" : ""}">${fmt(a)}<small>${n} paddle${n === 1 ? "" : "s"}</small></button>`;
+      }).join("");
+    }
+    function setLevel(a) {
+      level = a;
+      try { sessionStorage.setItem(levelKey, String(a)); } catch {}
+      bidIn.disabled = false; document.getElementById("add").disabled = false;
+      flash.className = ""; flash.textContent = "";
+      render();
+      bidIn.focus({ preventScroll: true });
+      // Bring the entry box to the top so it and the Add button stay above the phone keyboard.
+      const headerH = document.querySelector("header")?.offsetHeight || 0;
+      const top = document.getElementById("entry").getBoundingClientRect().top + scrollY - headerH - 8;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+    document.getElementById("levels").onclick = (e) => {
+      const b = e.target.closest("button[data-amt]"); if (b) setLevel(Number(b.dataset.amt));
+    };
+    document.getElementById("useOther").onclick = () => {
+      const a = Math.round(Number(document.getElementById("otherAmt").value) * 100) / 100;
+      if (!(a > 0)) return toast("Enter an amount first.", "err");
+      setLevel(a);
+    };
+
+    // Add a pledge. The screen updates instantly; the database save finishes in the background.
+    document.getElementById("entry").onsubmit = (e) => {
+      e.preventDefault();
+      const n = Number(bidIn.value);
+      if (!level) return toast("Pick a level first.", "err");
+      if (!Number.isInteger(n) || n < 1) { bidIn.select(); return; }
+      const b = bidders.get(n);
+      if (!b && !confirm(`Bid #${n} isn't registered. Add the pledge anyway?`)) { bidIn.select(); return; }
+      if (pledges.some((p) => p.bidNumber === n && p.amount === level) &&
+          !confirm(`#${n} already pledged ${fmt(level)}. Add another ${fmt(level)}?`)) { bidIn.select(); return; }
+      bidIn.value = ""; bidIn.focus();
+      flash.className = b ? "ok" : "warn";
+      flash.textContent = `✓ #${n} ${b ? fullName(b) : "(not registered)"} — ${fmt(level)}`;
+      setDoc(doc(db, "pledges", newItemId()), {
+        bidNumber: n, amount: level, paid: false, createdAt: serverTimestamp(), enteredBy: user.email,
+      }).catch((x) => { toast(`#${n} ${fmt(level)} was NOT saved — ${friendlyError(x)}`, "err"); });
+    };
+
+    document.getElementById("recent").onclick = async (e) => {
+      const id = e.target.dataset.del; if (!id) return;
+      const p = pledges.find((x) => x.id === id);
+      if (!p || !confirm(`Remove #${p.bidNumber}'s ${fmt(p.amount)} pledge?`)) return;
+      try { await deleteDoc(doc(db, "pledges", id)); toast("Pledge removed."); }
+      catch (x) { toast(friendlyError(x), "err"); }
+    };
+
+    function render() {
+      drawLevels();
+      const here = pledges.filter((p) => p.amount === level);
+      document.getElementById("nowAmt").textContent = level ? fmt(level) : "Pick a level";
+      document.getElementById("nowCount").textContent = level
+        ? `${here.length} paddle${here.length === 1 ? "" : "s"} · ${money(here.length * level)}` : "";
+      document.getElementById("recent").innerHTML = level ? ([...here].reverse().slice(0, 25).map((p) => `
+        <li><span><b>#${esc(p.bidNumber)}</b> ${esc(fullName(bidders.get(p.bidNumber))) || '<span class="pill warn">not registered</span>'}</span>
+          ${p.paid ? '<span class="pill ok">Paid</span>' : `<button class="danger" data-del="${esc(p.id)}">Remove</button>`}</li>`).join("")
+          || `<li class="muted">No paddles yet at ${fmt(level)}.</li>`) : `<li class="muted">Pick a level above.</li>`;
+
+      const amounts = [...new Set([...FUND_LEVELS, ...pledges.map((p) => p.amount)])].sort((a, b) => b - a);
+      document.getElementById("totRows").innerHTML = amounts.map((a) => {
+        const list = pledges.filter((p) => p.amount === a);
+        return list.length || FUND_LEVELS.includes(a)
+          ? `<tr><td>${fmt(a)}</td><td class="num">${list.length}</td><td class="num">${money(list.length * a)}</td></tr>` : "";
+      }).join("");
+      const sum = pledges.reduce((s, p) => s + Number(p.amount || 0), 0);
+      const paid = pledges.filter((p) => p.paid).reduce((s, p) => s + Number(p.amount || 0), 0);
+      document.getElementById("totCount").textContent = pledges.length;
+      document.getElementById("totSum").textContent = money(sum);
+      document.getElementById("paidLine").textContent = pledges.length
+        ? `Collected so far: ${money(paid)} · still owed: ${money(sum - paid)} (paid at Checkout)` : "";
+    }
+
+    document.getElementById("csv").onclick = () => {
+      const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const rows = [["Bid #", "Name", "Amount", "Paid", "Entered by"],
+        ...pledges.map((p) => [p.bidNumber, fullName(bidders.get(p.bidNumber)), p.amount, p.paid ? "Yes" : "No", p.enteredBy])];
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([rows.map((r) => r.map(cell).join(",")).join("\r\n")], { type: "text/csv" }));
+      a.download = "fund-a-need.csv"; a.click();
+    };
+
+    try { const saved = Number(sessionStorage.getItem(levelKey)); if (saved > 0) { level = saved; bidIn.disabled = false; document.getElementById("add").disabled = false; } } catch {}
+    listenBidders((m) => { bidders = m; render(); });
+    listenPledges((l) => { pledges = l; render(); });
+    render();
+  });
+</script>
+</body>
+</html>

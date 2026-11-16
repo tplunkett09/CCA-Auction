@@ -30,14 +30,17 @@
 </main>
 
 <script type="module">
-  import { staffPage, listenBidders, listenItems, db, doc, updateDoc, writeBatch, serverTimestamp,
+  import { staffPage, listenBidders, listenItems, listenPledges, pledgeAsLine, db, doc, updateDoc, writeBatch, serverTimestamp,
            esc, money, fullName, address, phoneFmt, timeFmt, staffName, toast, friendlyError } from "./js/firebase.js";
   import { shareReceipt, buildReceipt, downloadReceipt } from "./js/receipt.js";
   import { openItemViewer } from "./js/viewer.js";
 
   staffPage("Checkout", (user) => {
-    let bidders = new Map(), items = [], current = null;
-    const won = () => items.filter((i) => i.bidNumber != null);
+    let bidders = new Map(), items = [], pledges = [], current = null;
+    // Everything a bidder owes: won items plus Fund-a-Need pledges.
+    const won = () => [...items.filter((i) => i.bidNumber != null).map((i) => ({ ...i, kind: "item" })),
+                       ...pledges.map(pledgeAsLine)];
+    const coll = (line) => (line.kind === "pledge" ? "pledges" : "items");
 
     function renderDetail() {
       const el = document.getElementById("detail");
@@ -58,7 +61,7 @@
               ${b ? `<span class="muted">${esc(phoneFmt(b.phone))} · ${esc(address(b))}</span>` : ""}
             </div>
             <span class="pill ${!mine.length ? "warn" : due > 0 ? "bad" : "ok"}" style="font-size:1rem">
-              ${!mine.length ? "No items won" : due > 0 ? "Balance due" : "Paid in full"}</span>
+              ${!mine.length ? "Nothing owed" : due > 0 ? "Balance due" : "Paid in full"}</span>
           </div>
           <div class="totals">
             <div><span>Total</span><b>${money(total)}</b></div>
@@ -70,7 +73,7 @@
             <thead><tr><th>Item #</th><th>Description</th><th class="num">Retail</th><th class="num">Paid price</th><th>Status</th><th class="no-print"></th></tr></thead>
             <tbody>${mine.map((i) => `
               <tr>
-                <td><b>${esc(i.itemNumber)}</b></td>
+                <td>${i.kind === "pledge" ? '<span class="pill warn">Donation</span>' : `<b>${esc(i.itemNumber)}</b>`}</td>
                 <td>${esc(i.description)}</td>
                 <td class="num">${i.retailValue != null ? money(i.retailValue) : ""}</td>
                 <td class="num">${money(i.amount)}</td>
@@ -80,8 +83,8 @@
                 <td class="no-print"><div class="actions">
                   ${i.imageUrl ? `<button data-view="${esc(i.id)}">View item</button>` : ""}
                   ${i.paid
-                  ? `<button data-undo="${esc(i.id)}" ${i.pickedUp ? "disabled title='Already picked up'" : ""}>Undo</button>`
-                  : `<button class="ok" data-pay="${esc(i.id)}">Mark paid</button>`}
+                  ? `<button data-undo="${esc(i.kind)}:${esc(i.id)}" ${i.pickedUp ? "disabled title='Already picked up'" : ""}>Undo</button>`
+                  : `<button class="ok" data-pay="${esc(i.kind)}:${esc(i.id)}">Mark paid</button>`}
                 </div></td>
               </tr>`).join("")}</tbody>
           </table></div>
@@ -110,9 +113,10 @@
           i.paid ? `Paid${i.paidMethod ? " (" + i.paidMethod + ")" : ""}` : "Not paid yet",
         ] }, btn);
       });
-      el.querySelectorAll("[data-pay]").forEach((btn) => btn.onclick = () => setPaid([btn.dataset.pay], true, method()));
+      const ref = (s) => { const [kind, id] = s.split(":"); return { kind, id }; };
+      el.querySelectorAll("[data-pay]").forEach((btn) => btn.onclick = () => setPaid([ref(btn.dataset.pay)], true, method()));
       el.querySelectorAll("[data-undo]").forEach((btn) => btn.onclick = () => {
-        if (confirm("Undo payment for this item?")) setPaid([btn.dataset.undo], false);
+        if (confirm("Undo this payment?")) setPaid([ref(btn.dataset.undo)], false);
       });
       const shareBtn = document.getElementById("shareReceipt");
       if (shareBtn) {
@@ -126,15 +130,17 @@
         };
       }
       const all = document.getElementById("payAll");
-      if (all) all.onclick = () => setPaid(mine.filter((i) => !i.paid).map((i) => i.id), true, method());
+      if (all) all.onclick = () => setPaid(mine.filter((i) => !i.paid), true, method());
     }
 
-    async function setPaid(ids, paid, method = "") {
+    // lines: [{ kind: "item" | "pledge", id }]
+    async function setPaid(lines, paid, method = "") {
+      const ids = lines;
       const batch = writeBatch(db);
-      ids.forEach((id) => batch.update(doc(db, "items", id), paid
+      lines.forEach((l) => batch.update(doc(db, coll(l), l.id), paid
         ? { paid: true, paidAt: serverTimestamp(), paidMethod: method, paidBy: user.email }
         : { paid: false, paidAt: null, paidMethod: "", paidBy: "" }));
-      try { await batch.commit(); toast(paid ? `Marked ${ids.length} item(s) paid.` : "Payment undone."); }
+      try { await batch.commit(); toast(paid ? `Marked ${ids.length} line(s) paid.` : "Payment undone."); }
       catch (err) { toast(friendlyError(err), "err"); }
     }
 
@@ -148,7 +154,7 @@
       document.getElementById("owing").innerHTML = rows.map(([n, o]) => {
         const b = bidders.get(n);
         return `<tr class="click" data-bid="${n}"><td><b>${n}</b></td><td>${esc(fullName(b))}</td>
-          <td>${esc(phoneFmt(b?.phone))}</td><td class="num">${o.n} item${o.n > 1 ? "s" : ""}</td><td class="num">${money(o.amt)}</td></tr>`;
+          <td>${esc(phoneFmt(b?.phone))}</td><td class="num">${o.n} line${o.n > 1 ? "s" : ""}</td><td class="num">${money(o.amt)}</td></tr>`;
       }).join("") || `<tr><td colspan="5" class="muted">Everyone is paid up.</td></tr>`;
     }
     document.getElementById("owing").onclick = (e) => {
@@ -166,6 +172,7 @@
     const renderAll = () => { renderDetail(); renderOwing(); };
     listenBidders((m) => { bidders = m; renderAll(); });
     listenItems((l) => { items = l; renderAll(); });
+    listenPledges((l) => { pledges = l; renderAll(); });
   });
 </script>
 </body>

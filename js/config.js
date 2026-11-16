@@ -26,6 +26,9 @@ export const IMAGEKIT_SIGNER_URL = "https://cca-auction-photos.2009buckshot.work
 // Folder in your ImageKit media library where item photos are saved.
 export const IMAGEKIT_FOLDER = "/cca-auction";
 
+// Fund-a-Need (paddle raise) giving levels, in dollars, in the order the buttons appear.
+export const FUND_LEVELS = [50, 100, 500, 1000, 5000];
+
 // Item categories, in the order item numbers are assigned (Food first, then Gift Cards, ...).
 export const CATEGORIES = ["Food", "Gift Cards", "Kitchen", "Home Decor", "Apparel", "Kids",
   "Accessories", "Hunting/Outdoor", "Automotive", "Farm"];
