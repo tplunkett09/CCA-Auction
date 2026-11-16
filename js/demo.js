@@ -129,7 +129,9 @@ export const auth = { demo: true };
 // In demo mode you're signed in as the owner "demo@local". To try what a volunteer sees, add them
 // on the Staff page, then run  localStorage.demoEmail = "their@email"  in the browser console and reload.
 const demoEmail = () => { try { return localStorage.getItem("demoEmail") || "demo@local"; } catch { return "demo@local"; } };
-export function onAuthStateChanged(_auth, cb) { queueMicrotask(() => cb({ email: demoEmail() })); return () => {}; }
+export function onAuthStateChanged(_auth, cb) {
+  queueMicrotask(() => cb({ email: demoEmail(), getIdToken: async () => "demo-token" })); return () => {};
+}
 export const signInWithEmailAndPassword = async () => ({ user: { email: "demo@local" } });
 export const signOut = async () => { try { localStorage.removeItem("demoEmail"); } catch {} };
 export const sendPasswordResetEmail = async () => {};
