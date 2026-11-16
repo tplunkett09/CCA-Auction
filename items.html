@@ -21,6 +21,9 @@
     .cat { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px;
       background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); margin-right: 4px; }
     .numbering { border-left: 4px solid var(--accent); }
+    .lock-box { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .lock-box.locked { border-left: 4px solid var(--bad); background: var(--bad-bg); }
+    .lock-box button { min-height: 44px; }
     .photo-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; }
     .photo-btns button { min-height: 44px; flex: 1 1 140px; }
     .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 4px 0 12px; max-width: 320px; }
@@ -43,6 +46,7 @@
 </head>
 <body>
 <main>
+  <div class="card lock-box" id="lockBox" hidden></div>
   <form class="card" id="f">
     <h1 id="formTitle">Add an item</h1>
     <div class="row">
@@ -101,7 +105,7 @@
 
   <div class="card numbering" id="numbering" hidden></div>
 
-  <details class="card">
+  <details class="card" id="pasteBox">
     <summary><b>Paste a list from a spreadsheet</b></summary>
     <p class="muted">Copy columns from Excel or Google Sheets in this order and paste below:
       <b>Description, Category, Retail value</b>, then optionally <b>Image URL, Donor name, Donor address, Donor phone,
@@ -127,11 +131,12 @@
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, getDoc, setDoc, deleteDoc, runTransaction, serverTimestamp,
            esc, money, fullName, toast, friendlyError, donorKey, naturalSort, hasItemNumber, newItemId,
-           CATEGORIES, FIRST_ITEM_NUMBER } from "./js/firebase.js";
+           CATEGORIES, FIRST_ITEM_NUMBER, listenSettings, setItemsLocked } from "./js/firebase.js";
   import { pickPhoto, uploadPhoto, photosReady, notReadyMessage } from "./js/photos.js";
 
-  staffPage("Items", (user) => {
+  staffPage("Items", (user, access) => {
     const uploading = new Map();   // item id -> progress text, for the Photo buttons in the list
+    let locked = false, lockedBy = "";
     let bidders = new Map(), items = [], editingId = null, numberingStarted = false, counterNext = null, lastNumbered = -1;
     const f = document.getElementById("f");
     const counterRef = doc(db, "counters", "items");
@@ -188,6 +193,7 @@
 
     // Adds new items. Once numbering has been run, each new item also gets the next number right away.
     async function createItems(rows) {
+      if (locked) throw new Error("Adding new items is locked by an admin.");
       const made = [];
       for (let s = 0; s < rows.length; s += 400) {
         const chunk = rows.slice(s, s + 400).sort(byNumberingOrder);
@@ -346,6 +352,7 @@
       document.getElementById("formTitle").textContent = "Add an item";
       document.getElementById("existing").textContent = "";
       document.getElementById("save").textContent = "Save item";
+      applyLock();
     }
     function loadForEdit(i) {
       editingId = i.id;
@@ -358,6 +365,7 @@
       document.getElementById("existing").textContent = i.bidNumber != null
         ? `Won by #${i.bidNumber} ${fullName(bidders.get(i.bidNumber))} for ${money(i.amount)} — editing keeps the winner.` : "";
       document.getElementById("save").textContent = "Save changes";
+      f.hidden = false;
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
     document.getElementById("clear").onclick = () => { resetForm(); f.description.focus(); };
@@ -407,7 +415,7 @@
           <td class="photo">${thumbHtml(i.imageUrl, i.description)}</td>
           <td><button data-edit="${esc(i.id)}">Edit</button>
             <button data-photo="${esc(i.id)}" ${uploading.has(i.id) ? "disabled" : ""}>${uploading.has(i.id) ? esc(uploading.get(i.id)) : i.imageUrl ? "📷 Retake" : "📷 Photo"}</button>
-            ${i.bidNumber == null ? `<button class="danger" data-del="${esc(i.id)}">Delete</button>` : ""}</td>
+            ${i.bidNumber == null && !locked ? `<button class="danger" data-del="${esc(i.id)}">Delete</button>` : ""}</td>
         </tr>`).join("") || `<tr><td colspan="7" class="muted">No items yet — add one above or paste a list.</td></tr>`;
       renderNumbering();
     }
@@ -480,6 +488,34 @@
         paste.value = ""; paste.oninput();
       } catch (err) { toast(friendlyError(err), "err"); importBtn.disabled = false; }
     };
+
+    // ---------- admin lock on adding new items ----------
+    function applyLock() {
+      const box = document.getElementById("lockBox");
+      f.hidden = locked && !editingId;                       // editing existing items is still allowed
+      document.getElementById("pasteBox").hidden = locked;
+      box.classList.toggle("locked", locked);
+      box.hidden = !locked && !access.admin;
+      box.innerHTML = `
+        <div><b>${locked ? "🔒 Adding new items is locked" : "Adding new items is open"}</b><br>
+          <span class="muted">${locked
+            ? `No one can add items right now${lockedBy ? ` (locked by ${esc(lockedBy.split("@")[0])})` : ""}. Existing items can still be edited and photographed.`
+            : "Lock it when the auction goes live so no new items are added."}</span></div>
+        ${access.admin ? `<button id="lockBtn" class="${locked ? "" : "danger"}">${locked ? "Unlock adding items" : "🔒 Lock adding items"}</button>` : ""}`;
+      document.getElementById("lockBtn")?.addEventListener("click", async (e) => {
+        if (!locked && !confirm("Lock adding new items for everyone?")) return;
+        e.target.disabled = true;
+        try { await setItemsLocked(!locked, user.email); toast(locked ? "Adding items unlocked." : "Adding new items is now locked."); }
+        catch (x) { toast(friendlyError(x), "err"); e.target.disabled = false; }
+      });
+    }
+    listenSettings((s) => {
+      const changed = s.itemsLocked !== locked;
+      locked = s.itemsLocked; lockedBy = s.lockedBy;
+      if (changed && locked && !editingId) f.reset();
+      applyLock(); render();
+    });
+    applyLock();
 
     listenBidders((m) => { bidders = m; render(); });
     listenItems((l) => {

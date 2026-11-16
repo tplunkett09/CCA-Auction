@@ -105,6 +105,19 @@ export function listenBidders(cb) {
     cb(map);
   });
 }
+// App-wide switches set by admins (e.g. "adding new items is locked").
+export function listenSettings(cb) {
+  return liveCollection("settings", (snap) => {
+    let s = {};
+    snap.forEach((d) => { if (d.id === "app") s = d.data(); });
+    cb({ itemsLocked: s.itemsLocked === true, lockedBy: s.lockedBy || "" });
+  });
+}
+export function setItemsLocked(locked, email) {
+  return setDoc(doc(db, "settings", "app"),
+    { itemsLocked: !!locked, lockedBy: locked ? email : "", lockedAt: serverTimestamp() }, { merge: true });
+}
+
 export function listenItems(cb) {
   return liveCollection("items", (snap) => {
     const list = [];
@@ -135,6 +148,7 @@ export const PAGES = [
   // file,           key,        menu label, description (shown on the Staff page)
   ["index.html",    "home",     "Home",     "Live totals"],
   ["items.html",    "items",    "Items",    "Add/edit items, descriptions, photos"],
+  ["lookup.html",   "lookup",   "Item lookup", "Look up items and photos (read only)"],
   ["bidders.html",  "bidders",  "Bidders",  "Bidder names, phones, addresses"],
   ["winners.html",  "winners",  "Winners",  "Enter winning bids"],
   ["checkout.html", "checkout", "Checkout", "Take payments, receipts"],

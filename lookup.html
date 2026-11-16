@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Item lookup</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .search input { font-size: 1.15rem; padding: 12px 14px; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 6px; }
+    .filters button { min-height: 40px; border-radius: 999px; padding: 6px 14px; }
+    .filters button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .filters select { width: auto; min-height: 40px; margin: 0; padding: 6px 10px; border-radius: 999px; }
+    .list { display: grid; gap: 10px; }
+    .it { display: flex; gap: 12px; align-items: flex-start; padding: 12px; background: var(--card);
+      border: 1px solid var(--line); border-radius: 12px; }
+    .it.has-photo { cursor: pointer; }
+    .it .ph { flex: 0 0 76px; width: 76px; height: 76px; border-radius: 10px; object-fit: cover;
+      background: var(--bg); border: 1px solid var(--line); display: grid; place-items: center;
+      font-size: .7rem; color: var(--muted); text-align: center; }
+    .it .body { flex: 1; min-width: 0; }
+    .it .num { font-weight: 800; font-size: 1.15rem; }
+    .it .desc { font-weight: 600; margin: 1px 0 4px; overflow-wrap: anywhere; }
+    .it .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+    .it .meta { font-size: .9rem; color: var(--muted); }
+    .it .view { margin-top: 8px; min-height: 40px; }
+    .tag { display: inline-block; font-size: .75rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+    .tag.live { background: var(--bad-bg); color: var(--bad); }
+    .tag.silent { color: var(--muted); border: 1px solid var(--line); }
+    .tag.cat { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card search">
+    <h1 style="margin-bottom:8px">Item lookup</h1>
+    <input id="q" type="search" inputmode="search" autocomplete="off" placeholder="Item #, description, donor or bidder #">
+    <div class="filters" id="filters">
+      <button data-f="all" class="on">All</button>
+      <button data-f="Silent">Silent</button>
+      <button data-f="Live">Live</button>
+      <select id="cat"></select>
+    </div>
+    <p class="muted" id="count" style="margin:4px 0 0"></p>
+  </div>
+  <div class="list" id="list"></div>
+</main>
+
+<script type="module">
+  import { staffPage, listenItems, listenBidders, esc, money, fullName, hasItemNumber, CATEGORIES } from "./js/firebase.js";
+  import { openItemViewer } from "./js/viewer.js";
+
+  staffPage("Item lookup", () => {
+    let items = [], bidders = new Map(), type = "all";
+    const q = document.getElementById("q"), cat = document.getElementById("cat");
+    cat.innerHTML = `<option value="">All categories</option>` + CATEGORIES.map((c) => `<option>${esc(c)}</option>`).join("");
+    const typeOf = (i) => (i.auctionType === "Live" ? "Live" : "Silent");
+
+    const thumb = (url) => {
+      try {
+        const u = new URL(url);
+        if (u.hostname.endsWith("imagekit.io") && !u.searchParams.has("tr") && !u.pathname.includes("/tr:")) u.searchParams.set("tr", "w-160,h-160");
+        return u.href;
+      } catch { return url; }
+    };
+    const status = (i) => i.bidNumber == null ? "No winner yet"
+      : i.pickedUp ? "✓ Picked up" : i.paid ? "Paid — ready for pickup" : "Not paid";
+
+    function render() {
+      const term = q.value.trim().toLowerCase();
+      const shown = items.filter((i) => {
+        if (type !== "all" && typeOf(i) !== type) return false;
+        if (cat.value && i.category !== cat.value) return false;
+        if (!term) return true;
+        if (hasItemNumber(i) && String(i.itemNumber).toLowerCase() === term) return true;
+        if (/^\d+$/.test(term) && String(i.bidNumber) === term) return true;
+        return `${i.itemNumber ?? ""} ${i.description || ""} ${i.donorName || ""} ${i.category || ""}`.toLowerCase().includes(term);
+      });
+      // exact item # match first
+      shown.sort((a, b) => (String(b.itemNumber).toLowerCase() === term) - (String(a.itemNumber).toLowerCase() === term));
+      document.getElementById("count").textContent = `${shown.length} of ${items.length} items`;
+      document.getElementById("list").innerHTML = shown.slice(0, 300).map((i) => `
+        <div class="it${i.imageUrl ? " has-photo" : ""}" data-id="${esc(i.id)}">
+          ${i.imageUrl ? `<img class="ph" src="${esc(thumb(i.imageUrl))}" alt="" loading="lazy"
+                onerror="this.outerHTML='<div class=&quot;ph&quot;>No photo</div>'">` : `<div class="ph">No photo</div>`}
+          <div class="body">
+            <div class="num">${hasItemNumber(i) ? "#" + esc(i.itemNumber) : '<span class="pill warn">No # yet</span>'}</div>
+            <div class="desc">${esc(i.description)}</div>
+            <div class="tags"><span class="tag ${typeOf(i).toLowerCase()}">${typeOf(i)}</span>
+              ${i.category ? `<span class="tag cat">${esc(i.category)}</span>` : ""}</div>
+            <div class="meta">
+              ${i.retailValue != null ? `Retail ${money(i.retailValue)}` : ""}
+              ${i.bidNumber != null ? `<br>Won by #${esc(i.bidNumber)} ${esc(fullName(bidders.get(i.bidNumber)))} · ${money(i.amount)}` : ""}
+              <br>${esc(status(i))}
+              ${i.donorName ? `<br>Donor: ${esc(i.donorName)}` : ""}
+            </div>
+            ${i.imageUrl ? `<button class="view" data-view="${esc(i.id)}">View item</button>` : ""}
+          </div>
+        </div>`).join("") ||
+        `<div class="card"><p class="muted" style="margin:0">${items.length ? "No items match." : "No items yet."}</p></div>`;
+    }
+
+    document.getElementById("list").onclick = (e) => {
+      const card = e.target.closest(".it.has-photo");
+      if (!card) return;
+      const i = items.find((x) => x.id === card.dataset.id);
+      openItemViewer({ ...i, details: [
+        i.retailValue != null ? `Retail value ${money(i.retailValue)}` : "",
+        i.bidNumber != null ? `Won by #${i.bidNumber} ${fullName(bidders.get(i.bidNumber))}` : "",
+        status(i),
+      ] }, card.querySelector("[data-view]"));
+    };
+    document.getElementById("filters").onclick = (e) => {
+      const b = e.target.closest("button[data-f]"); if (!b) return;
+      type = b.dataset.f;
+      document.querySelectorAll("#filters button").forEach((x) => x.classList.toggle("on", x === b));
+      render();
+    };
+    q.oninput = render; cat.onchange = render;
+
+    listenBidders((m) => { bidders = m; render(); });
+    listenItems((l) => { items = l; render(); });
+  });
+</script>
+</body>
+</html>

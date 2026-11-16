@@ -64,7 +64,8 @@ export function openItemViewer(item, fromBtn) {
   if (!item?.imageUrl) return;
   if (!el) build();
   returnFocus = fromBtn || null;
-  el.querySelector(".v-num").textContent = `Item #${item.itemNumber}`;
+  const hasNum = item.itemNumber != null && String(item.itemNumber).trim() !== "";
+  el.querySelector(".v-num").textContent = hasNum ? `Item #${item.itemNumber}` : "Item (not numbered yet)";
   el.querySelector(".v-title").textContent = item.description || "";
   el.querySelector(".v-meta").textContent = (item.details || []).filter(Boolean).join(" · ");
   el.querySelector(".v-info a").href = item.imageUrl;

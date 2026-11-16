@@ -47,7 +47,7 @@
 
 <script type="module">
   import { staffPage, listenBidders, listenItems, db, doc, setDoc, serverTimestamp,
-           esc, money, fullName, toast, friendlyError , newItemId } from "./js/firebase.js";
+           esc, money, fullName, toast, friendlyError , newItemId, listenSettings } from "./js/firebase.js";
 
   staffPage("Winners", (user) => {
     let bidders = new Map(), items = [];
@@ -124,6 +124,8 @@
       if (!bidders.has(bidNumber) && !confirm(`Bid #${bidNumber} isn't registered. Save anyway?`)) return;
 
       const existing = findItem(itemNumber);
+      if (!existing && itemsLocked)
+        return toast(`There's no item #${itemNumber}. Adding new items is locked — check the number.`, "err");
       if (existing?.paid && existing.bidNumber !== bidNumber)
         return toast(`Item ${itemNumber} is already PAID by #${existing.bidNumber}. Undo the payment at Checkout first.`, "err");
 
@@ -157,6 +159,8 @@
 
     listenBidders((m) => { bidders = m; showWho(); render(); });
     listenItems((l) => { items = l; showExisting(); render(); });
+    let itemsLocked = false;
+    listenSettings((st) => (itemsLocked = st.itemsLocked));
   });
 </script>
 </body>

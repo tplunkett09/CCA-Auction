@@ -60,3 +60,28 @@ Visit your site's home page and sign in once with a staff account. That creates 
 - **Free tier limits** (50k reads / 20k writes per day) are far more than a typical auction uses.
 - Item numbers can be anything (`12`, `A-4`, `Silent-31`) but can't contain `/`.
 - Bid numbers are assigned in a database transaction, so two people signing up at the same moment never get the same number.
+
+---
+
+## Phone camera photos (ImageKit)
+
+Staff can tap **📷 Take photo** on the Items page (or **📷 Photo** on any item in the list) and the picture is
+shrunk on the phone, uploaded to your ImageKit media library, and linked to the item automatically.
+
+ImageKit requires each upload to be signed with your **private** key, which must never be put in this public site.
+A free Cloudflare Worker does the signing, and only for signed-in staff. One-time setup (about 10 minutes):
+
+1. **ImageKit keys:** ImageKit dashboard → **Developer options** → **API keys**. Note the **Public key** and **Private key**.
+2. **Create the Worker:** sign up free at <https://dash.cloudflare.com> → **Workers & Pages** → **Create** →
+   **Create Worker** → name it e.g. `cca-auction-photos` → **Deploy** → **Edit code** → delete the sample,
+   paste all of `imagekit-signer.js` → **Deploy**.
+3. **Worker settings:** the Worker's **Settings → Variables and Secrets → Add**:
+   - `IMAGEKIT_PRIVATE_KEY` — type **Secret** — your ImageKit private key
+   - `FIREBASE_PROJECT_ID` — type Text — `cca-auction`
+   - `ALLOWED_ORIGIN` — type Text — `https://tplunkett09.github.io`
+   Then **Deploy** again.
+4. **Copy the Worker link** shown on its overview page (like `https://cca-auction-photos.yourname.workers.dev`).
+5. **Edit `js/config.js`** in the repo: paste the public key into `IMAGEKIT_PUBLIC_KEY` and the Worker link into
+   `IMAGEKIT_SIGNER_URL`. Optionally change `IMAGEKIT_FOLDER`. Commit.
+
+Photos land in that folder of your ImageKit media library.
